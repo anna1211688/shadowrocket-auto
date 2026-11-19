@@ -1,6 +1,8 @@
 import base64
 import json
 import socket
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -123,6 +125,38 @@ class RegionAndQualityReportTests(unittest.TestCase):
             self.assertEqual(data["protocol_counts"], {"trojan": 1, "vless": 1})
             self.assertEqual(data["measurement"], "tcp_connect_only")
             self.assertNotIn("203.0.113.1", report_path.read_text(encoding="utf-8"))
+
+class AdversarialInputTests(unittest.TestCase):
+    def test_vmess_non_string_host_and_bad_ports_are_rejected(self):
+        for host in (123, [], {}, None):
+            raw = json.dumps({"add": host, "port": 443}).encode()
+            uri = "vmess://" + base64.urlsafe_b64encode(raw).decode()
+            self.assertEqual(collector.get_endpoint(uri), (None, None, None))
+        for port in (0, -1, 65536, True, "nope"):
+            raw = json.dumps({"add": "example.org", "port": port}).encode()
+            uri = "vmess://" + base64.urlsafe_b64encode(raw).decode()
+            self.assertEqual(collector.get_endpoint(uri), (None, None, None))
+
+    @patch("scripts.collector.socket.getaddrinfo", side_effect=OSError("resolver error"))
+    def test_literal_ip_socket_error_is_contained(self, mocked):
+        self.assertEqual(collector.resolve_public_addresses("8.8.8.8"), [])
+
+    @patch("scripts.collector.socket.getaddrinfo", side_effect=socket.gaierror("no answer"))
+    def test_dns_error_is_contained(self, mocked):
+        self.assertEqual(collector.resolve_public_addresses("unresolved.example"), [])
+
+    def test_single_bad_node_does_not_raise(self):
+        with patch("scripts.collector.resolve_public_addresses", side_effect=TypeError("bad input")):
+            self.assertEqual(collector.test_node("vless://uuid@example.org:443")[0], "timeout")
+
+    def test_subscription_input_caps_lines_and_length(self):
+        old_count, old_length = collector.MAX_SOURCE_NODES, collector.MAX_LINE_LENGTH
+        try:
+            collector.MAX_SOURCE_NODES = 2
+            collector.MAX_LINE_LENGTH = 8
+            self.assertEqual(collector.decode_subscription("vless://a\nvless://b\nvless://c"), ["vless://a", "vless://b"])
+        finally:
+            collector.MAX_SOURCE_NODES, collector.MAX_LINE_LENGTH = old_count, old_length
 
 
 if __name__ == "__main__":
