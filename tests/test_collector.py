@@ -63,6 +63,12 @@ class PublicAddressValidationTests(unittest.TestCase):
         self.assertEqual(collector.resolve_public_addresses("dns.example"), expected)
 
     @patch("scripts.collector.subprocess.run")
+    def test_rejects_malformed_dns_names_before_lookup(self, mocked_run):
+        for host in ("-f.example", "bad..example", "bad_name.example", "name;id.example"):
+            self.assertEqual(collector.resolve_public_addresses(host), [])
+        mocked_run.assert_not_called()
+
+    @patch("scripts.collector.subprocess.run")
     def test_rejects_mixed_public_and_private_dns_answers(self, mocked_run):
         mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "8.8.8.8 STREAM mixed.example\n10.0.0.5 STREAM mixed.example\n"})()
         self.assertEqual(collector.resolve_public_addresses("mixed.example"), [])
@@ -159,6 +165,14 @@ class SourceUrlSecurityTests(unittest.TestCase):
 
 
 class AdversarialInputTests(unittest.TestCase):
+    def test_candidate_work_is_bounded(self):
+        stats = {}
+        candidates = [f"vless://id@node{i}.example:443" for i in range(collector.MAX_TEST_CANDIDATES + 25)]
+        limited = collector.limit_candidates(candidates, stats)
+        self.assertEqual(len(limited), collector.MAX_TEST_CANDIDATES)
+        self.assertEqual(stats["skipped_limit"], 25)
+        self.assertEqual(limited, candidates[:collector.MAX_TEST_CANDIDATES])
+
     def test_vmess_non_string_host_and_bad_ports_are_rejected(self):
         for host in (123, [], {}, None):
             raw = json.dumps({"add": host, "port": 443}).encode()
