@@ -1,6 +1,6 @@
 # shadowrocket-auto
 
-自动收集公共节点并生成 **Shadowrocket（小火箭）** 订阅。
+自动收集公共节点并生成 Shadowrocket 订阅。
 
 ## 订阅地址
 
@@ -8,52 +8,35 @@
 https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadowrocket.txt
 ```
 
-复制以上链接 → 小火箭 → 配置 → 订阅 → 添加即可。
+复制链接 → 小火箭 → 配置 → 订阅 → 添加。
 
-## 功能特点
+## 安全说明
 
-- 多源自动拉取公共节点（带重试）
-- 并行 TCP 连通性测试 + 延迟测量（不等同于代理隧道可用）
-- **严格过滤**：超时节点、高延迟节点、私有 IP
-- 按延迟优先 + 协议权重排序（VLESS / Trojan 优先）
-- 按「协议 + 主机 + 端口 + 凭据/传输参数」去重，忽略节点备注
-- 域名 DNS 解析后校验所有地址，拒绝混合公网/内网解析结果\n- 自动按节点名称/主机名推测地区（无法识别时归入 OTHER）\n- 每小时自动更新（GitHub Actions）
+- 订阅源响应上限 2 MiB；每源最多 5,000 条、总计最多 20,000 条候选；单行最多 8 KiB。
+- VMess 主机和端口进行严格类型/范围校验；单个异常节点不会中断整批任务。
+- DNS 答案只要包含非公网地址就拒绝；连接时使用已校验的解析结果。
+- 每个节点有连接总时限，防止多地址轮询无限拖延。
+- 工作流只提交 Base64 订阅和聚合质量报告，不提交明文节点文件。
+- 无可用节点时保留上一版订阅；报告会标注订阅是否更新。
 
-## 过滤策略
+**重要：Base64 不是加密。** 公开仓库中的订阅任何人都能解码，节点 URI 可能包含 UUID、密码和服务器地址。请只发布你有权公开的节点。私用订阅应使用私有仓库或受访问控制的发布渠道。如果历史提交曾含明文节点或真实凭据，仅删除当前文件不足以消除泄露，应轮换凭据并清理 Git 历史。
 
-| 条件 | 处理 |
-|------|------|
-| TCP 连接超过 3 秒 | 丢弃（超时） |
-| 连通但延迟 > 2.5 秒 | 丢弃 |
-| 私有/回环/保留 IP（含域名 DNS 解析结果） | 丢弃 |\n| DNS 同时返回公网与内网地址 | 整个节点丢弃 |
-| 最终保留 | 延迟最低的前 150 个节点 |
+DNS 检查只在收集时发生；客户端稍后会重新解析域名，因此无法保证发布后 DNS 不变。不要简单把域名替换成 IP，否则可能破坏 TLS SNI、Host 或证书验证。
+
+## 检测含义
+
+质量报告的检测类型为 tcp_connect_only。TCP 端口可连接不代表代理认证、TLS/传输层握手或实际隧道可用。地区按节点备注/主机名关键词推测，不是 IP 地理定位。
 
 ## 本地运行
 
 ```bash
-pip install requests
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
 python scripts/collector.py
 ```
 
-运行后会生成：
-- `docs/shadowrocket.txt` —— base64 订阅（给客户端用）
-- `docs/shadowrocket_plain.txt` —— 明文节点列表（调试用）\n- `docs/quality_report.json` —— 聚合质量报告（协议/地区数量、TCP 连通数、延迟分位数；不包含节点地址或凭据）
+生成 docs/shadowrocket.txt（Base64 订阅）和 docs/quality_report.json（不含节点 URI 的聚合报告）。
 
-## 配置说明
+## 配置
 
-### 订阅源
-`config/sources.txt`（每行一个 URL，支持 `#` 注释）
-
-### 核心参数（`scripts/collector.py` 顶部）
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `TIMEOUT` | 3.0 | TCP 连接超时（秒） |
-| `MAX_LATENCY` | 2.5 | 最大可接受延迟（秒） |
-| `MAX_NODES` | 150 | 最终保留节点数 |
-| `MAX_WORKERS` | 50 | 并发测试数 |
-| `SOURCE_RETRIES` | 1 | 源拉取失败重试次数 |
-
-地区识别基于节点备注和主机名中的关键词，仅作提示，不是 IP 地理定位。质量报告明确标记检测类型为 `tcp_connect_only`：端口可连接不代表代理认证、TLS 握手或实际隧道可用。\n\n## License
-
-MIT
+订阅源位于 config/sources.txt，每行一个 URL，支持 # 注释。请只添加可信来源。
