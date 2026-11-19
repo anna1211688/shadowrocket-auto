@@ -27,9 +27,11 @@
 
 DNS 检查只在收集时发生；客户端稍后会重新解析域名，因此无法保证发布后 DNS 不变。不要简单把域名替换成 IP，否则可能破坏 TLS SNI、Host 或证书验证。
 
-## 检测含义
+## 检测与排名
 
-质量报告的检测类型为 tcp_connect_median_3_samples：TCP 节点重复连接三次，至少两次成功后，以中位建连延迟排名，并报告抖动。Hysteria、Hysteria2/Hy2、TUIC 等 UDP 协议会标记为 udp_unverified，不会被错误地当作 TCP 可用节点。TCP 端口可连接仍不代表代理认证、协议握手、实际隧道可用或下载速度；当前排名不是网速排名。地区按节点备注/主机名关键词推测，不是 IP 地理定位。
+每小时任务先对 TCP 节点进行三次建连采样（至少两次成功），计算中位延迟和抖动；Hysteria2/Hy2、TUIC 等 UDP 节点不再冒充 TCP 可达。随后使用固定版本且 SHA-256 校验的 sing-box，在本机回环地址启动隔离的代理入口，通过真实代理隧道对候选节点下载 Cloudflare 测试数据（每节点最多两次、每次 256 KiB）。当前每轮最多测速 12 个低延迟 TCP 节点和 3 个 UDP 节点。只有完成完整下载的节点才进入订阅，按实测 Mbps 从高到低排序；失败或不支持的节点不会伪造速度，也不会进入本轮新订阅。若没有节点通过测速，则保留上一版订阅。
+
+当前转换器覆盖常见 VLESS（TLS/Reality、WS/gRPC/HTTP 传输）、Trojan、VMess、Shadowsocks（无插件）、Hysteria2 和 TUIC 分享链接；非标准传输、SS 插件及暂未支持的格式会明确跳过。GitHub runner 的测速结果受 runner 出口、测试服务和时段影响，不等于用户手机所在网络的实际速度。测速只使用受限大小的公共测试流量，不会对节点进行压力测试。质量报告只公开哈希节点 ID、协议、测速 Mbps 和聚合统计，不公开服务器地址、UUID 或密码。地区仍按节点备注/主机名关键词推测，不是 IP 地理定位。
 
 ## 本地运行
 
@@ -39,7 +41,7 @@ python -m unittest discover -s tests -v
 python scripts/collector.py
 ```
 
-本地生成 docs/shadowrocket.txt（Base64 订阅）和 docs/quality_report.json（不含节点 URI 的聚合报告）；订阅文件已加入 .gitignore，请勿提交。
+本地生成 docs/shadowrocket.txt（Base64 订阅，按实际 Mbps 排序）和 docs/quality_report.json（仅含哈希 ID 与测速统计）；订阅文件已加入 .gitignore，请勿提交。
 
 ## 配置
 
