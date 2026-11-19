@@ -153,7 +153,7 @@ class AdversarialInputTests(unittest.TestCase):
         old_count, old_length = collector.MAX_SOURCE_NODES, collector.MAX_LINE_LENGTH
         try:
             collector.MAX_SOURCE_NODES = 2
-            collector.MAX_LINE_LENGTH = 8
+            collector.MAX_LINE_LENGTH = 9
             self.assertEqual(collector.decode_subscription("vless://a\nvless://b\nvless://c"), ["vless://a", "vless://b"])
         finally:
             collector.MAX_SOURCE_NODES, collector.MAX_LINE_LENGTH = old_count, old_length
