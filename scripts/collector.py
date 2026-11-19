@@ -429,10 +429,12 @@ def test_node(line: str):
         if not addresses:
             return "private", line, None, protocol, None
         samples = []
+        node_deadline = time.perf_counter() + NODE_DEADLINE
         for _ in range(TCP_SAMPLES):
-            deadline = time.perf_counter() + NODE_DEADLINE
+            if node_deadline <= time.perf_counter():
+                break
             for family, socktype, proto, _, sockaddr in addresses:
-                remaining = deadline - time.perf_counter()
+                remaining = node_deadline - time.perf_counter()
                 if remaining <= 0:
                     break
                 target = (sockaddr[0], port, *sockaddr[2:]) if family == socket.AF_INET6 else (sockaddr[0], port)
