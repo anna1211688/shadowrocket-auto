@@ -639,6 +639,11 @@ def main():
     successful_speed_nodes, speed_results = rank_by_speed(speed_shortlist, binary)
     stats["proxy_speed_tested"] = len(speed_results)
     stats["proxy_speed_ok"] = len(successful_speed_nodes)
+    stats["udp_speed_verified"] = sum(
+        1 for uri, result in successful_speed_nodes
+        if get_endpoint(uri)[0] in ("hysteria2", "hy2", "tuic")
+    )
+    stats["udp_unverified"] = max(0, stats.get("udp_unverified", 0) - stats["udp_speed_verified"])
     stats["proxy_speed_failed_or_unsupported"] = len(speed_results) - len(successful_speed_nodes)
 
     if not successful_speed_nodes:
