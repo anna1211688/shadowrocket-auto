@@ -126,6 +126,28 @@ class RegionAndQualityReportTests(unittest.TestCase):
             self.assertEqual(data["measurement"], "tcp_connect_only")
             self.assertNotIn("203.0.113.1", report_path.read_text(encoding="utf-8"))
 
+class SourceUrlSecurityTests(unittest.TestCase):
+    def test_allows_only_https_raw_github_sources(self):
+        self.assertTrue(collector.is_allowed_source_url(
+            "https://raw.githubusercontent.com/owner/repo/main/list.txt"
+        ))
+        for url in (
+            "http://raw.githubusercontent.com/owner/repo/main/list.txt",
+            "https://github.com/owner/repo",
+            "https://raw.githubusercontent.com.evil.example/list",
+            "https://user:pass@raw.githubusercontent.com/owner/repo/file",
+            "https://raw.githubusercontent.com:8443/owner/repo/file",
+            "file:///etc/passwd",
+            "https://127.0.0.1/private",
+        ):
+            self.assertFalse(collector.is_allowed_source_url(url), url)
+
+    @patch("scripts.collector.requests.get")
+    def test_rejects_untrusted_source_before_network_request(self, mocked_get):
+        self.assertEqual(collector.fetch_source("http://127.0.0.1/secret"), [])
+        mocked_get.assert_not_called()
+
+
 class AdversarialInputTests(unittest.TestCase):
     def test_vmess_non_string_host_and_bad_ports_are_rejected(self):
         for host in (123, [], {}, None):
