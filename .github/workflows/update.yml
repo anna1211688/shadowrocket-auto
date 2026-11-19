@@ -31,6 +31,30 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Collect nodes
         run: python scripts/collector.py
+      - name: Validate generated public subscription artifact
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          path = Path('docs/shadowrocket.txt')
+          if not path.exists():
+              print('No subscription artifact exists yet; collector preserved the empty state.')
+              raise SystemExit(0)
+          raw = path.read_text(encoding='ascii').strip()
+          if not raw or len(raw) > 2_000_000:
+              raise SystemExit('Subscription artifact is empty or exceeds the publication size limit')
+          try:
+              decoded = base64.b64decode(raw, validate=True).decode('utf-8')
+          except (ValueError, UnicodeDecodeError) as exc:
+              raise SystemExit('Subscription artifact is not valid Base64 UTF-8') from exc
+          lines = [line.strip() for line in decoded.splitlines() if line.strip()]
+          allowed = ('ss://', 'vmess://', 'vless://', 'trojan://', 'hysteria://', 'hysteria2://', 'hy2://', 'tuic://')
+          if not lines or len(lines) > 150 or any(not line.lower().startswith(allowed) for line in lines):
+              raise SystemExit('Subscription artifact failed node-count or URI-scheme validation')
+          if Path('docs/shadowrocket_plain.txt').exists():
+              raise SystemExit('Plaintext subscription artifact must not be published')
+          print(f'Validated {len(lines)} encoded subscription entries')
+          PY
       - name: Save generated public artifacts only
         env:
           GH_TOKEN: ${{ github.token }}
