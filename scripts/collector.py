@@ -1,9 +1,11 @@
 import base64
 import ipaddress
 import json
+import os
 import re
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -51,6 +53,26 @@ PROTOCOL_WEIGHT = {
     "ss": 4,
 }
 # ====================================
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write a complete UTF-8 file beside its destination, then atomically replace it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def decode_base64(value: str) -> str:
@@ -257,8 +279,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "p95": percentile(latencies, 0.95),
         },
     }
-    QUALITY_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    QUALITY_REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
 def get_dedup_key(line: str):
@@ -423,10 +444,16 @@ def fetch_source(url: str) -> list[str]:
         print('[源拒绝] 仅允许 HTTPS raw.githubusercontent.com')
         return []
     last_error = None
+    # One deadline covers every attempt and the retry delay; retries never reset the budget.
+    deadline = time.monotonic() + SOURCE_DEADLINE
     for attempt in range(1 + SOURCE_RETRIES):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            last_error = "TimeoutError"
+            break
         try:
-            deadline = time.monotonic() + SOURCE_DEADLINE
-            with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
+            request_timeout = (min(SOURCE_TIMEOUT[0], remaining), min(SOURCE_TIMEOUT[1], remaining))
+            with requests.get(url, timeout=request_timeout, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
                 # Redirects are disabled above; accept only a successful full response.
                 # raise_for_status() does not reject 3xx when redirects are disabled.
                 if resp.status_code != 200:
@@ -436,7 +463,7 @@ def fetch_source(url: str) -> list[str]:
                     raise ValueError("source too large")
                 chunks, total = [], 0
                 for chunk in resp.iter_content(chunk_size=16384):
-                    if time.monotonic() > deadline:
+                    if time.monotonic() >= deadline:
                         raise TimeoutError("source deadline exceeded")
                     if not chunk:
                         continue
@@ -444,11 +471,16 @@ def fetch_source(url: str) -> list[str]:
                     if total > MAX_SOURCE_BYTES:
                         raise ValueError("source too large")
                     chunks.append(chunk)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("source deadline exceeded")
                 return decode_subscription(b"".join(chunks).decode("utf-8-sig", errors="replace"))
         except (requests.RequestException, ValueError, UnicodeError, TimeoutError) as e:
             last_error = type(e).__name__
             if attempt < SOURCE_RETRIES:
-                time.sleep(1)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(1.0, remaining))
     print(f"[源失败] request failed or response limit exceeded ({last_error})")
     return []
 
@@ -527,11 +559,9 @@ def main():
                 if status == "ok":
                     alive.append((line, latency, protocol))
 
-    subscription_status = "updated" if alive else "preserved_previous"
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, subscription_status)
-    print(f"质量报告已更新: {QUALITY_REPORT}")
-
     if not candidates:
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有可用候选节点，保留旧订阅。")
         return
 
@@ -545,6 +575,8 @@ def main():
     print("-" * 46)
 
     if not alive:
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有检测到可建立 TCP 连接的节点，保留旧订阅。")
         return
 
@@ -557,14 +589,13 @@ def main():
         _, host, port = get_endpoint(line)
         print(f"  {lat*1000:.0f}ms  {proto}://{host}:{port}")
 
-    # 6. 写入文件
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-
-    # base64 订阅（给客户端用）
+    # 6. Write the local subscription atomically before reporting it as updated.
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
-    OUTPUT.write_text(content + "\n", encoding="utf-8")
+    atomic_write_text(OUTPUT, content + "\n")
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated")
+    print(f"质量报告已更新: {QUALITY_REPORT}")
 
-    print(f"\n已发布节点: {len(selected)} 个")
+    print(f"\n已生成节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
     print("仅生成 Base64 订阅；不会写出明文节点文件。")
     print(f"  → {QUALITY_REPORT} (聚合质量报告)")
