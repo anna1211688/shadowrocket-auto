@@ -344,7 +344,7 @@ def main():
         print(f"  拉取到 {len(nodes)} 条: {url}")
         raw_nodes.extend(nodes)
 
-    # 3. 初步过滤 + 按 (protocol, host, port) 去重
+    # 3. 初步过滤 + 按端点、凭据和传输参数去重
     candidates = []
     seen_keys = set()
 
@@ -365,7 +365,7 @@ def main():
     print(f"去重后候选节点: {len(candidates)}")
 
     # 4. 并行测试 + 分类统计
-    print(f"开始并行测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
+    print(f"开始并行 TCP 连通性测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
 
     alive: list[tuple[str, float, str]] = []  # (line, latency, protocol)
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0}
