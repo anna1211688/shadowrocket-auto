@@ -164,7 +164,8 @@ def infer_region(line: str) -> str:
 
 
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
-                         alive: list[tuple[str, float, str]]) -> None:
+                         alive: list[tuple[str, float, str]],
+                         subscription_status: str = "preserved_previous") -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -189,6 +190,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "measurement": "tcp_connect_only",
         "note": "TCP reachability is not proof that proxy authentication or tunneling works.",
+        "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
         "tcp_reachable": len(alive),
@@ -438,7 +440,8 @@ def main():
                 if status == "ok":
                     alive.append((line, latency, protocol))
 
-    write_quality_report(len(raw_nodes), len(candidates), stats, alive)
+    subscription_status = "updated" if alive else "preserved_previous"
+    write_quality_report(len(raw_nodes), len(candidates), stats, alive, subscription_status)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     if not candidates:
