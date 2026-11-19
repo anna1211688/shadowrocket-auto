@@ -20,6 +20,14 @@ https://raw.githubusercontent.com/ssrsub/ssr/master/v2ray
 # ===== 2026-11-20 新增可用源 =====
 https://raw.githubusercontent.com/danmaifu/mianfeijiedian/main/feed/v2ray-20261119.txt
 https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt
-https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/all_configs.txt
+# SoliSpirit/v2ray-configs all_configs.txt 已于 2026-11-20 移除：文件约 4.0 MB，超过采集器 2 MB 上限，每轮都被拒绝（0 节点）
 https://raw.githubusercontent.com/lagzian/SS-Collector/main/configs/subscription-all.b64
 https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/hy2
+
+# ===== 2026-11-20 审查新增源（均已实测，并按去重键核对为现有池外的新节点）=====
+https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/all_sub.txt
+https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription_num
+https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/trojan
+https://raw.githubusercontent.com/Leon406/SubCrawler/main/sub/share/ss
+https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/EternityAir.txt
+https://raw.githubusercontent.com/Huibq/TrojanLinks/master/links/vmess
