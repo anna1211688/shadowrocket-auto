@@ -1,42 +1,87 @@
 {
-  "generated_at": "2026-11-19T12:52:06.523250+00:00",
-  "measurement": "tcp_connect_only",
-  "note": "TCP reachability is not proof that proxy authentication or tunneling works.",
+  "generated_at": "2026-11-19T13:12:35.472610+00:00",
+  "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
+  "ranking": "measured_proxy_download_mbps_descending",
+  "speed_test": {
+    "tested": 25,
+    "successful": 4,
+    "failed_or_unsupported": 21,
+    "download_mbps": {
+      "min": 0.16,
+      "average": 0.85,
+      "p50": 0.3,
+      "p95": 2.3
+    },
+    "top_nodes": [
+      {
+        "id": "4aebb676f891",
+        "protocol": "vmess",
+        "download_mbps": 2.7,
+        "tcp_latency_ms": 6.5
+      },
+      {
+        "id": "ccefc2eb0fe9",
+        "protocol": "vless",
+        "download_mbps": 0.32,
+        "tcp_latency_ms": 6.1
+      },
+      {
+        "id": "714583212a3e",
+        "protocol": "vmess",
+        "download_mbps": 0.2,
+        "tcp_latency_ms": 6.7
+      },
+      {
+        "id": "362e09a295d0",
+        "protocol": "vless",
+        "download_mbps": 0.16,
+        "tcp_latency_ms": 6.3
+      }
+    ]
+  },
+  "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
   "subscription_status": "updated",
-  "raw_nodes": 5449,
-  "unique_candidates": 4470,
-  "tcp_reachable": 1079,
+  "raw_nodes": 5448,
+  "unique_candidates": 4473,
+  "tcp_reachable": 2794,
+  "udp_unverified": 217,
   "rejected": {
-    "ok": 1079,
-    "slow": 1,
-    "timeout": 366,
+    "ok": 2794,
+    "slow": 0,
+    "timeout": 1340,
     "invalid": 127,
-    "private": 74,
-    "duplicate": 832,
-    "skipped_limit": 2970
+    "private": 142,
+    "duplicate": 828,
+    "udp_unverified": 217,
+    "skipped_limit": 0,
+    "proxy_speed_tested": 25,
+    "proxy_speed_ok": 4,
+    "udp_speed_verified": 0,
+    "proxy_speed_failed_or_unsupported": 21
   },
   "protocol_counts": {
-    "hysteria2": 5,
-    "ss": 209,
-    "trojan": 176,
-    "vless": 634,
-    "vmess": 55
+    "ss": 300,
+    "trojan": 365,
+    "vless": 1677,
+    "vmess": 452
   },
   "region_counts": {
-    "DE": 74,
-    "GB": 63,
-    "HK": 17,
-    "JP": 23,
-    "KR": 9,
-    "OTHER": 688,
-    "SG": 36,
-    "TW": 7,
-    "US": 162
+    "DE": 108,
+    "GB": 65,
+    "HK": 19,
+    "JP": 27,
+    "KR": 11,
+    "OTHER": 2308,
+    "SG": 46,
+    "TW": 8,
+    "US": 202
   },
   "latency_ms": {
-    "min": 0.6,
-    "average": 157.3,
-    "p50": 151.0,
-    "p95": 283.2
+    "min": 6.1,
+    "average": 100.6,
+    "p50": 49.9,
+    "p95": 216.6,
+    "jitter_average": 58.4,
+    "jitter_p95": 100.7
   }
 }
