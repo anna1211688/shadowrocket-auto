@@ -49,6 +49,20 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(outbound["transport"]["type"], "ws")
         self.assertEqual(outbound["tls"]["enabled"], True)
 
+    def test_vmess_non_numeric_alter_id_is_unsupported_not_a_crash(self):
+        raw = json.dumps({"add":"example.com","port":"443","id":"uuid","aid":"abc","net":"tcp"}).encode()
+        uri = "vmess://" + base64.urlsafe_b64encode(raw).decode()
+        with self.assertRaises(speedtest.UnsupportedNode):
+            speedtest.build_outbound(uri)
+
+    def test_balanced_shortlist_survives_malformed_node(self):
+        raw = json.dumps({"add":"example.com","port":"443","id":"uuid","aid":"abc","net":"tcp"}).encode()
+        bad = "vmess://" + base64.urlsafe_b64encode(raw).decode()
+        good = "trojan://secret@example.com:443"
+        selected, unsupported = speedtest._balanced_speed_shortlist([bad, good], 10)
+        self.assertEqual(selected, [good])
+        self.assertEqual(len(unsupported), 1)
+
     def test_unknown_transport_is_skipped_not_guessed(self):
         with self.assertRaises(speedtest.UnsupportedNode):
             speedtest.build_outbound("vless://uuid@example.com:443?type=kcp")

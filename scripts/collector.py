@@ -3,6 +3,7 @@ import ipaddress
 import hashlib
 import json
 import os
+import random
 import re
 import socket
 import subprocess
@@ -613,6 +614,10 @@ def main():
         candidates.append(line)
 
     unique_candidate_count = len(candidates)
+    # 候选按源顺序排列时，测试上限会固定切掉排在后面的源（实测 11k 候选
+    # 只测前 5k，后加的源永远轮不到）。按小时种子打散，让每小时一轮的
+    # 覆盖范围轮换，长期每个源都有机会被测到。
+    random.Random(int(time.time() // 3600)).shuffle(candidates)
     candidates = limit_candidates(candidates, stats)
     print(
         f"去重后候选节点: {unique_candidate_count}；"
@@ -683,9 +688,9 @@ def main():
 
     import shutil
     try:
+        from speedtest import rank_by_speed  # python scripts/collector.py
+    except ImportError:  # package-style execution
         from .speedtest import rank_by_speed
-    except ImportError:  # python scripts/collector.py
-        from speedtest import rank_by_speed
     binary = os.environ.get("SING_BOX_PATH") or shutil.which("sing-box")
     if not binary:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")

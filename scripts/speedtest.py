@@ -4,10 +4,8 @@ Only explicitly supported share-link forms are tested. Unsupported formats are
 reported as skipped; they are never treated as successful or assigned fake Mbps.
 """
 import base64
-import hashlib
 import json
 import os
-import re
 import socket
 import subprocess
 import tempfile
@@ -174,10 +172,14 @@ def build_outbound(uri):
             raise UnsupportedNode("invalid VMess JSON")
         if not isinstance(data, dict) or not data.get("id"):
             raise UnsupportedNode("VMess UUID missing")
+        try:
+            alter_id = int(data.get("aid", 0) or 0)
+        except (TypeError, ValueError):
+            raise UnsupportedNode("VMess alter_id is not a number")
         outbound.update({
             "type": "vmess",
             "uuid": str(data["id"]),
-            "alter_id": int(data.get("aid", 0)),
+            "alter_id": alter_id,
             "security": str(data.get("scy") or "auto"),
         })
         network = str(data.get("net") or "tcp").lower()
@@ -450,11 +452,14 @@ def _balanced_speed_shortlist(nodes, limit):
     for uri in nodes:
         try:
             build_outbound(uri)
-        except UnsupportedNode as exc:
+        except (UnsupportedNode, ValueError, TypeError) as exc:
+            # One malformed share link must never abort the whole round:
+            # build_outbound historically leaked plain ValueError/TypeError
+            # for bad fields (e.g. a non-numeric VMess alter_id).
             unsupported.append((uri, {
                 "status": "unsupported",
                 "stage": "preflight",
-                "reason": str(exc),
+                "reason": str(exc) if isinstance(exc, UnsupportedNode) else "malformed share link",
             }))
             continue
         protocol = collector.get_endpoint(uri)[0] or "unknown"
