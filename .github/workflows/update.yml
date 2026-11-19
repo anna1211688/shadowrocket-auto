@@ -64,3 +64,22 @@ jobs:
           else
             echo 'No public artifact changes'
           fi
+
+      - name: Publish public Shadowrocket subscription to gh-pages
+        if: success() && hashFiles('docs/shadowrocket.txt') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pages_dir="$RUNNER_TEMP/shadowrocket-pages"
+          mkdir -p "$pages_dir"
+          cp docs/shadowrocket.txt "$pages_dir/shadowrocket.txt"
+          touch "$pages_dir/.nojekyll"
+          git -C "$pages_dir" init --initial-branch=gh-pages
+          git -C "$pages_dir" config user.name 'github-actions[bot]'
+          git -C "$pages_dir" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$pages_dir" add -- shadowrocket.txt .nojekyll
+          git -C "$pages_dir" commit -m "Publish latest Shadowrocket subscription"
+          git -C "$pages_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -C "$pages_dir" -c http.extraheader="$auth_header" push --force origin HEAD:gh-pages
+          echo 'Published subscription file to gh-pages/shadowrocket.txt'
