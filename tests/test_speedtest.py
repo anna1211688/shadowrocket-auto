@@ -59,7 +59,7 @@ class SingBoxOutboundTests(unittest.TestCase):
             "tls_error",
         )
         self.assertEqual(
-            speedtest._singbox_error_kind("unknown field \\"server_name\\""),
+            speedtest._singbox_error_kind("unknown field server_name"),
             "unknown_field",
         )
 
