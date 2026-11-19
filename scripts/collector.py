@@ -311,7 +311,9 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
         "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
         "ranking": "measured_proxy_download_mbps_descending",
         "speed_test": {
-            "tested": len(speed_results),
+            "candidates_considered": len(speed_results),
+            "tested": sum(1 for _, result in speed_results if result.get("status") != "unsupported"),
+            "unsupported": sum(1 for _, result in speed_results if result.get("status") == "unsupported"),
             "successful": len(successful_speeds),
             "failed_or_unsupported": len(speed_results) - len(successful_speeds),
             "download_mbps": {
@@ -691,7 +693,13 @@ def main():
 
     print(f"开始真实代理隧道下载测速：TCP {len(tcp_shortlist)} 个，UDP {len(udp_shortlist)} 个")
     successful_speed_nodes, speed_results = rank_by_speed(speed_shortlist, binary)
-    stats["proxy_speed_tested"] = len(speed_results)
+    stats["proxy_speed_candidates_considered"] = len(speed_results)
+    stats["proxy_speed_unsupported"] = sum(
+        1 for _, result in speed_results if result.get("status") == "unsupported"
+    )
+    stats["proxy_speed_tested"] = sum(
+        1 for _, result in speed_results if result.get("status") != "unsupported"
+    )
     stats["proxy_speed_ok"] = len(successful_speed_nodes)
     stats["udp_speed_verified"] = sum(
         1 for uri, result in successful_speed_nodes
