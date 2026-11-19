@@ -125,8 +125,21 @@ class RegionAndQualityReportTests(unittest.TestCase):
             self.assertEqual(data["tcp_reachable"], 2)
             self.assertEqual(data["region_counts"], {"HK": 1, "JP": 1})
             self.assertEqual(data["protocol_counts"], {"trojan": 1, "vless": 1})
-            self.assertEqual(data["measurement"], "tcp_connect_only")
+            self.assertEqual(data["measurement"], "tcp_connect_median_3_samples")
             self.assertNotIn("203.0.113.1", report_path.read_text(encoding="utf-8"))
+
+class ProtocolAwareProbeTests(unittest.TestCase):
+    def test_udp_protocols_are_not_misreported_as_tcp_reachable(self):
+        for uri in (
+            "hysteria2://password@example.com:443#udp",
+            "hy2://password@example.com:443#udp",
+            "tuic://uuid:password@example.com:443#udp",
+        ):
+            with patch("scripts.collector.resolve_public_addresses") as resolver:
+                result = collector.test_node(uri)
+                resolver.assert_not_called()
+            self.assertEqual(result[0], "udp_unverified")
+            self.assertIsNone(result[2])
 
 class SourceUrlSecurityTests(unittest.TestCase):
     def test_allows_only_https_raw_github_sources(self):
