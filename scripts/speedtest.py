@@ -249,83 +249,137 @@ def _wait_local(port, process):
     return False
 
 
+def _singbox_error_kind(output):
+    """Return a coarse, non-sensitive diagnostic label; never publish raw sing-box output."""
+    message = (output or "").lower()
+    labels = (
+        ("unknown_field", ("unknown field", "unknown key", "extra field")),
+        ("unsupported_option", ("unsupported", "not supported")),
+        ("tls_error", ("tls", "certificate", "x509")),
+        ("reality_error", ("reality", "public key", "short id")),
+        ("authentication_error", ("authentication", "unauthorized", "invalid user", "invalid password")),
+        ("config_error", ("invalid", "parse", "decode", "configuration")),
+        ("network_error", ("connection refused", "timeout", "network is unreachable", "no route")),
+    )
+    for label, needles in labels:
+        if any(needle in message for needle in needles):
+            return label
+    return "no_detail"
+
+
+def _exception_diagnostic(exc):
+    """Expose exception class and numeric network/HTTP codes, never raw URLs or credentials."""
+    detail = {"error_type": type(exc).__name__}
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        detail["http_status"] = code
+    reason = getattr(exc, "reason", None)
+    errno = getattr(reason, "errno", None) or getattr(exc, "errno", None)
+    if isinstance(errno, int):
+        detail["errno"] = errno
+    return detail
+
+
 def measure_node(uri, binary):
     started = time.monotonic()
+    stage = "build_outbound"
     try:
         outbound = build_outbound(uri)
     except UnsupportedNode as exc:
-        return {"status": "unsupported", "reason": str(exc)}
+        return {"status": "unsupported", "stage": stage, "reason": str(exc)}
 
-    # Re-resolve and validate immediately before launching sing-box. Pin the
-    # outbound to the validated public IP to prevent DNS-rebinding/SSRF races;
-    # TLS SNI and transport Host remain the original URI values.
-    _, original_host, _ = collector.get_endpoint(uri)
-    addresses = collector.resolve_public_addresses(original_host)
-    if not addresses:
-        return {"status": "dns_rejected", "reason": "no validated public address"}
-    outbound["server"] = addresses[0][4][0]
-
-    port = _free_port()
-    config = {
-        "log": {"disabled": True},
-        "inbounds": [{
-            "type": "mixed",
-            "tag": "local-in",
-            "listen": "127.0.0.1",
-            "listen_port": port,
-        }],
-        "outbounds": [outbound],
-        "route": {"final": "proxy"},
-    }
     process = None
     try:
+        stage = "dns_validation"
+        _, original_host, _ = collector.get_endpoint(uri)
+        addresses = collector.resolve_public_addresses(original_host)
+        if not addresses:
+            return {"status": "dns_rejected", "stage": stage, "reason": "no_validated_public_address"}
+        outbound["server"] = addresses[0][4][0]
+
+        port = _free_port()
+        config = {
+            "log": {"disabled": False, "level": "warn", "timestamp": False},
+            "inbounds": [{
+                "type": "mixed",
+                "tag": "local-in",
+                "listen": "127.0.0.1",
+                "listen_port": port,
+            }],
+            "outbounds": [outbound],
+            "route": {"final": "proxy"},
+        }
         with tempfile.TemporaryDirectory(prefix="node-speed-") as directory:
             config_path = Path(directory) / "config.json"
+            stderr_path = Path(directory) / "sing-box.stderr"
             config_path.write_text(json.dumps(config), encoding="utf-8")
             os.chmod(config_path, 0o600)
+
+            stage = "config_check"
             check = subprocess.run(
                 [binary, "check", "-c", str(config_path)],
                 capture_output=True, text=True, timeout=4,
             )
             if check.returncode != 0:
-                return {"status": "invalid_config", "reason": "sing-box rejected generated config"}
-            process = subprocess.Popen(
-                [binary, "run", "-c", str(config_path)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            if not _wait_local(port, process):
-                return {"status": "handshake_failed", "reason": "local proxy did not start"}
+                return {
+                    "status": "invalid_config",
+                    "stage": stage,
+                    "reason": _singbox_error_kind(check.stderr or check.stdout),
+                }
 
-            proxy = urllib.request.ProxyHandler({
-                "http": f"http://127.0.0.1:{port}",
-                "https": f"http://127.0.0.1:{port}",
-            })
-            opener = urllib.request.build_opener(proxy)
-            rates = []
-            for _ in range(SPEED_TEST_SAMPLES):
-                request = urllib.request.Request(
-                    DOWNLOAD_URL,
-                    headers={"User-Agent": "shadowrocket-auto-speedtest/1.0", "Cache-Control": "no-cache"},
+            stage = "singbox_start"
+            with stderr_path.open("w+", encoding="utf-8") as stderr_file:
+                process = subprocess.Popen(
+                    [binary, "run", "-c", str(config_path)],
+                    stdout=subprocess.DEVNULL, stderr=stderr_file,
                 )
-                sample_start = time.monotonic()
-                with opener.open(request, timeout=SPEED_TEST_TIMEOUT) as response:
-                    if response.status != 200:
-                        raise OSError(f"speed endpoint HTTP {response.status}")
-                    payload = response.read(SPEED_TEST_BYTES + 1)
-                elapsed = time.monotonic() - sample_start
-                if len(payload) != SPEED_TEST_BYTES or elapsed <= 0:
-                    raise OSError("incomplete speed-test payload")
-                rates.append((len(payload) * 8) / elapsed / 1_000_000)
-            rates.sort()
-            median = rates[len(rates) // 2] if len(rates) % 2 else sum(rates) / 2
-            return {
-                "status": "ok",
-                "download_mbps": round(median, 2),
-                "samples_mbps": [round(rate, 2) for rate in rates],
-                "elapsed_seconds": round(time.monotonic() - started, 2),
-            }
+                if not _wait_local(port, process):
+                    stderr_file.flush()
+                    stderr_file.seek(0)
+                    diagnostic = _singbox_error_kind(stderr_file.read())
+                    return {
+                        "status": "handshake_failed",
+                        "stage": stage,
+                        "reason": diagnostic,
+                    }
+
+                stage = "proxy_https_request"
+                proxy = urllib.request.ProxyHandler({
+                    "http": f"http://127.0.0.1:{port}",
+                    "https": f"http://127.0.0.1:{port}",
+                })
+                opener = urllib.request.build_opener(proxy)
+                rates = []
+                for _ in range(SPEED_TEST_SAMPLES):
+                    request = urllib.request.Request(
+                        DOWNLOAD_URL,
+                        headers={"User-Agent": "shadowrocket-auto-speedtest/1.0", "Cache-Control": "no-cache"},
+                    )
+                    sample_start = time.monotonic()
+                    with opener.open(request, timeout=SPEED_TEST_TIMEOUT) as response:
+                        stage = "response_validation"
+                        if response.status != 200:
+                            raise OSError(f"speed endpoint HTTP {response.status}")
+                        payload = response.read(SPEED_TEST_BYTES + 1)
+                    elapsed = time.monotonic() - sample_start
+                    if len(payload) != SPEED_TEST_BYTES or elapsed <= 0:
+                        raise OSError("incomplete speed-test payload")
+                    rates.append((len(payload) * 8) / elapsed / 1_000_000)
+                rates.sort()
+                median = rates[len(rates) // 2] if len(rates) % 2 else sum(rates) / 2
+                return {
+                    "status": "ok",
+                    "stage": "complete",
+                    "download_mbps": round(median, 2),
+                    "samples_mbps": [round(rate, 2) for rate in rates],
+                    "elapsed_seconds": round(time.monotonic() - started, 2),
+                }
     except Exception as exc:
-        return {"status": "download_failed", "reason": type(exc).__name__}
+        return {
+            "status": "download_failed",
+            "stage": stage,
+            **_exception_diagnostic(exc),
+        }
     finally:
         if process is not None:
             process.terminate()
@@ -334,7 +388,6 @@ def measure_node(uri, binary):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
-
 
 def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT):
     """Speed-test a bounded shortlist; return URI/result pairs in measured Mbps order."""
