@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 OUTPUT_PLAIN = ROOT / "docs" / "shadowrocket_plain.txt"  # 明文调试用
+QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
 # ============ 可配置参数 ============
 TIMEOUT = 3.0                 # TCP 连接超时（秒）
@@ -98,11 +99,89 @@ def resolve_public_addresses(host: str) -> list[tuple]:
 
 
 def is_public_ip(host: str) -> bool:
-    """仅接受字面公网 IP，域名必须通过 resolve_public_addresses 校验。"""
+    """快速过滤明确的非公网 IP；域名在实际连接前只解析并验证一次。"""
     try:
         return ipaddress.ip_address(host).is_global
     except ValueError:
-        return bool(resolve_public_addresses(host))
+        return True
+
+
+REGION_KEYWORDS = {
+    "HK": ("香港", "hong kong", "hongkong", "hkg", "🇭🇰"),
+    "TW": ("台湾", "台灣", "taiwan", "taipei", "🇹🇼"),
+    "JP": ("日本", "东京", "東京", "大阪", "japan", "tokyo", "osaka", "🇯🇵"),
+    "SG": ("新加坡", "狮城", "singapore", "🇸🇬"),
+    "KR": ("韩国", "韓國", "首尔", "首爾", "korea", "seoul", "🇰🇷"),
+    "US": ("美国", "美國", "洛杉矶", "西雅图", "硅谷", "united states", "los angeles", "seattle", "🇺🇸"),
+    "DE": ("德国", "德國", "germany", "frankfurt", "🇩🇪"),
+    "GB": ("英国", "英國", "伦敦", "倫敦", "united kingdom", "london", "🇬🇧"),
+}
+
+
+def get_node_label(line: str) -> str:
+    """提取节点备注及主机名，用于不依赖第三方服务的地区猜测。"""
+    protocol = get_protocol(line)
+    label = ""
+    if protocol == "vmess":
+        try:
+            raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
+            label = str(json.loads(raw).get("ps", ""))
+        except (ValueError, TypeError):
+            pass
+    else:
+        label = urllib.parse.unquote(urllib.parse.urlsplit(line).fragment)
+    _, host, _ = get_endpoint(line)
+    return f"{label} {host or ''}".lower()
+
+
+def infer_region(line: str) -> str:
+    """根据节点备注/主机名推测地区；无法判断时返回 OTHER，不调用外部地理定位服务。"""
+    label = get_node_label(line)
+    for region, keywords in REGION_KEYWORDS.items():
+        if any(keyword.lower() in label for keyword in keywords):
+            return region
+    return "OTHER"
+
+
+def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
+                         alive: list[tuple[str, float, str]]) -> None:
+    """写入不包含节点地址/凭据的聚合质量报告。"""
+    import datetime
+    import statistics
+
+    latencies = sorted(latency * 1000 for _, latency, _ in alive)
+    protocol_counts: dict[str, int] = {}
+    region_counts: dict[str, int] = {}
+    for line, _, protocol in alive:
+        protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+        region = infer_region(line)
+        region_counts[region] = region_counts.get(region, 0) + 1
+
+    def percentile(values: list[float], fraction: float):
+        if not values:
+            return None
+        index = min(len(values) - 1, max(0, round((len(values) - 1) * fraction)))
+        return round(values[index], 1)
+
+    report = {
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "measurement": "tcp_connect_only",
+        "note": "TCP reachability is not proof that proxy authentication or tunneling works.",
+        "raw_nodes": raw_count,
+        "unique_candidates": candidate_count,
+        "tcp_reachable": len(alive),
+        "rejected": stats,
+        "protocol_counts": dict(sorted(protocol_counts.items())),
+        "region_counts": dict(sorted(region_counts.items())),
+        "latency_ms": {
+            "min": round(latencies[0], 1) if latencies else None,
+            "average": round(statistics.mean(latencies), 1) if latencies else None,
+            "p50": percentile(latencies, 0.50),
+            "p95": percentile(latencies, 0.95),
+        },
+    }
+    QUALITY_REPORT.parent.mkdir(parents=True, exist_ok=True)
+    QUALITY_REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def get_dedup_key(line: str):
@@ -285,23 +364,27 @@ def main():
 
     print(f"去重后候选节点: {len(candidates)}")
 
-    if not candidates:
-        print("没有可用候选节点，保留旧订阅。")
-        return
-
     # 4. 并行测试 + 分类统计
     print(f"开始并行测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
 
     alive: list[tuple[str, float, str]] = []  # (line, latency, protocol)
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0}
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(test_node, line) for line in candidates]
-        for future in as_completed(futures):
-            status, line, latency, protocol = future.result()
-            stats[status] = stats.get(status, 0) + 1
-            if status == "ok":
-                alive.append((line, latency, protocol))
+    if candidates:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(test_node, line) for line in candidates]
+            for future in as_completed(futures):
+                status, line, latency, protocol = future.result()
+                stats[status] = stats.get(status, 0) + 1
+                if status == "ok":
+                    alive.append((line, latency, protocol))
+
+    write_quality_report(len(raw_nodes), len(candidates), stats, alive)
+    print(f"质量报告已更新: {QUALITY_REPORT}")
+
+    if not candidates:
+        print("没有可用候选节点，保留旧订阅。")
+        return
 
     print("-" * 46)
     print("测试结果统计:")
@@ -313,7 +396,7 @@ def main():
     print("-" * 46)
 
     if not alive:
-        print("没有检测到合格节点，保留旧订阅。")
+        print("没有检测到可建立 TCP 连接的节点，保留旧订阅。")
         return
 
     # 5. 排序：先按延迟，再按协议权重
@@ -338,6 +421,7 @@ def main():
     print(f"\n已发布节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
     print(f"  → {OUTPUT_PLAIN} (明文调试)")
+    print(f"  → {QUALITY_REPORT} (聚合质量报告)")
 
 
 if __name__ == "__main__":
