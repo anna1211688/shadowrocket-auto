@@ -144,7 +144,8 @@ def get_node_label(line: str) -> str:
     if protocol == "vmess":
         try:
             raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
-            label = str(json.loads(raw).get("ps", ""))
+            parsed = json.loads(raw)
+            label = str(parsed.get("ps", "")) if isinstance(parsed, dict) else ""
         except (ValueError, TypeError):
             pass
     else:
@@ -179,8 +180,10 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     def percentile(values: list[float], fraction: float):
         if not values:
             return None
-        index = min(len(values) - 1, max(0, round((len(values) - 1) * fraction)))
-        return round(values[index], 1)
+        position = (len(values) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(values) - 1)
+        return round(values[lower] + (values[upper] - values[lower]) * (position - lower), 1)
 
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -289,6 +292,8 @@ def get_endpoint(line: str):
                 host, _, port_str = endpoint.rpartition(":")
                 port = int(port_str) if port_str.isdigit() else 0
 
+            if not isinstance(host, str) or not host or len(host) > 253 or not 1 <= port <= 65535:
+                return None, None, None
             return protocol, host, port
 
     except (ValueError, TypeError, AttributeError, UnicodeError, json.JSONDecodeError):
@@ -390,6 +395,7 @@ def main():
             break
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重
+    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
     candidates = []
     seen_keys = set()
 
@@ -400,6 +406,7 @@ def main():
             continue
         # 域名在 test_node 中做 DNS 公网校验；这里仅排除明确的非公网 IP 字面量。
         if not is_public_ip(host):
+            stats["private"] += 1
             continue
 
         key = get_dedup_key(line)
@@ -418,8 +425,6 @@ def main():
     print(f"开始并行 TCP 连通性测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
 
     alive: list[tuple[str, float, str]] = []  # (line, latency, protocol)
-    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
-
     if candidates:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(test_node, line) for line in candidates]
