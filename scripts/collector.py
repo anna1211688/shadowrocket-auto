@@ -274,6 +274,23 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     ]
     successful_speeds.sort(key=lambda item: item[1]["download_mbps"], reverse=True)
     speed_values = [float(result["download_mbps"]) for _, result in successful_speeds]
+    failure_diagnostics = [
+        result for _, result in speed_results if result.get("status") != "ok"
+    ]
+    diagnostic_counts = {
+        "by_status": {},
+        "by_stage": {},
+        "by_error_type": {},
+    }
+    for result in failure_diagnostics:
+        for key, field in (
+            ("by_status", "status"),
+            ("by_stage", "stage"),
+            ("by_error_type", "error_type"),
+        ):
+            value = str(result.get(field) or "unknown")
+            diagnostic_counts[key][value] = diagnostic_counts[key].get(value, 0) + 1
+
     speed_nodes = []
     for uri, result in successful_speeds[:20]:
         protocol, _, _ = get_endpoint(uri)
@@ -300,6 +317,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 "p95": percentile(sorted(speed_values), 0.95),
             },
             "top_nodes": speed_nodes,
+            "diagnostic_counts": diagnostic_counts,
             "failure_diagnostics": [
                 {
                     "protocol": get_endpoint(uri)[0],
