@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-11-19T12:52:06.523250+00:00",
+  "measurement": "tcp_connect_only",
+  "note": "TCP reachability is not proof that proxy authentication or tunneling works.",
+  "subscription_status": "updated",
+  "raw_nodes": 5449,
+  "unique_candidates": 4470,
+  "tcp_reachable": 1079,
+  "rejected": {
+    "ok": 1079,
+    "slow": 1,
+    "timeout": 366,
+    "invalid": 127,
+    "private": 74,
+    "duplicate": 832,
+    "skipped_limit": 2970
+  },
+  "protocol_counts": {
+    "hysteria2": 5,
+    "ss": 209,
+    "trojan": 176,
+    "vless": 634,
+    "vmess": 55
+  },
+  "region_counts": {
+    "DE": 74,
+    "GB": 63,
+    "HK": 17,
+    "JP": 23,
+    "KR": 9,
+    "OTHER": 688,
+    "SG": 36,
+    "TW": 7,
+    "US": 162
+  },
+  "latency_ms": {
+    "min": 0.6,
+    "average": 157.3,
+    "p50": 151.0,
+    "p95": 283.2
+  }
+}
