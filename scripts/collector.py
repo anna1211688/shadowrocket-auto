@@ -464,11 +464,15 @@ def main():
 
     # 2. 拉取所有节点（带重试）
     raw_nodes: list[str] = []
-    with ThreadPoolExecutor(max_workers=MAX_SOURCE_WORKERS) as source_executor:
-        for nodes in source_executor.map(fetch_source, sources):
-            raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
-            if len(raw_nodes) >= MAX_TOTAL_NODES:
-                break
+    for offset in range(0, len(sources), MAX_SOURCE_WORKERS):
+        batch = sources[offset:offset + MAX_SOURCE_WORKERS]
+        with ThreadPoolExecutor(max_workers=MAX_SOURCE_WORKERS) as source_executor:
+            for nodes in source_executor.map(fetch_source, batch):
+                raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
+                if len(raw_nodes) >= MAX_TOTAL_NODES:
+                    break
+        if len(raw_nodes) >= MAX_TOTAL_NODES:
+            break
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
