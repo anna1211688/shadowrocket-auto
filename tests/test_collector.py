@@ -120,12 +120,17 @@ class RegionAndQualityReportTests(unittest.TestCase):
                         ("vless://uuid@203.0.113.1:443#Tokyo", 0.1, "vless"),
                         ("trojan://secret@203.0.113.2:443#HongKong", 0.2, "trojan"),
                     ],
+                    "updated",
+                    [("vless://uuid@203.0.113.1:443#Tokyo", {"status": "ok", "download_mbps": 12.5})],
                 )
             data = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(data["tcp_reachable"], 2)
+            self.assertEqual(data["speed_test"]["successful"], 1)
+            self.assertEqual(data["speed_test"]["top_nodes"][0]["download_mbps"], 12.5)
+            self.assertNotIn("example.com", report_path.read_text(encoding="utf-8"))
             self.assertEqual(data["region_counts"], {"HK": 1, "JP": 1})
             self.assertEqual(data["protocol_counts"], {"trojan": 1, "vless": 1})
-            self.assertEqual(data["measurement"], "tcp_connect_median_3_samples")
+            self.assertEqual(data["measurement"], "proxy_download_speed_mbps_with_tcp_latency_context")
             self.assertNotIn("203.0.113.1", report_path.read_text(encoding="utf-8"))
 
 class ProtocolAwareProbeTests(unittest.TestCase):
