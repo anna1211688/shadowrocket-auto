@@ -2,13 +2,11 @@
 
 自动收集公共节点并生成 Shadowrocket 订阅。
 
-## 订阅地址
+## 订阅发布状态
 
-```
-https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadowrocket.txt
-```
+出于凭据保护考虑，本仓库暂不公开发布节点订阅文件。采集结果只在运行环境本地生成，不会提交到 Git 历史；公开工作流仅更新不含节点 URI 的聚合质量报告。请不要把本仓库的公开地址当作可用订阅地址。
 
-复制链接 → 小火箭 → 配置 → 订阅 → 添加。
+如需个人使用，请在可信环境本地运行采集器，并自行通过私有仓库或有访问控制的渠道托管订阅。不要把真实 UUID、密码或私有节点 URI 提交到公开仓库。
 
 ## 安全说明
 
@@ -18,7 +16,7 @@ https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadow
 - VMess 主机和端口进行严格类型/范围校验；单个异常节点不会中断整批任务。
 - DNS 答案只要包含非公网地址就拒绝；连接时使用已校验的解析结果。
 - 每个节点有连接总时限，防止多地址轮询无限拖延。
-- 工作流只提交 Base64 订阅和聚合质量报告，不提交明文节点文件。
+- 公开工作流只提交不含节点 URI 的聚合质量报告；订阅文件不进入 Git 跟踪或公开发布。
 - 无可用节点时保留上一版订阅；报告会标注订阅是否更新。
 
 **重要：Base64 不是加密。** 公开仓库中的订阅任何人都能解码，节点 URI 可能包含 UUID、密码和服务器地址。请只发布你有权公开的节点。私用订阅应使用私有仓库或受访问控制的发布渠道。如果历史提交曾含明文节点或真实凭据，仅删除当前文件不足以消除泄露，应轮换凭据并清理 Git 历史。
@@ -37,7 +35,7 @@ python -m unittest discover -s tests -v
 python scripts/collector.py
 ```
 
-生成 docs/shadowrocket.txt（Base64 订阅）和 docs/quality_report.json（不含节点 URI 的聚合报告）。
+本地生成 docs/shadowrocket.txt（Base64 订阅）和 docs/quality_report.json（不含节点 URI 的聚合报告）；订阅文件已加入 .gitignore，请勿提交。
 
 ## 配置
 
