@@ -76,5 +76,54 @@ class PublicAddressValidationTests(unittest.TestCase):
         self.assertTrue(collector.resolve_public_addresses("8.8.8.8"))
 
 
+
+class RegionAndQualityReportTests(unittest.TestCase):
+    def test_infers_japan_from_node_remark(self):
+        self.assertEqual(
+            collector.infer_region("vless://uuid@example.com:443#Tokyo-01"),
+            "JP",
+        )
+
+    def test_infers_hong_kong_from_chinese_remark(self):
+        self.assertEqual(
+            collector.infer_region("trojan://secret@example.com:443#香港中转"),
+            "HK",
+        )
+
+    def test_unknown_region_is_other(self):
+        self.assertEqual(
+            collector.infer_region("vless://uuid@example.com:443#node-01"),
+            "OTHER",
+        )
+
+    def test_domain_is_deferred_to_connection_time_validation(self):
+        with patch("scripts.collector.socket.getaddrinfo") as mocked:
+            self.assertTrue(collector.is_public_ip("node.example"))
+            mocked.assert_not_called()
+
+    def test_report_aggregates_without_node_addresses(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "quality_report.json"
+            with patch.object(collector, "QUALITY_REPORT", report_path):
+                collector.write_quality_report(
+                    5, 3,
+                    {"ok": 2, "slow": 1, "timeout": 0, "invalid": 0, "private": 0},
+                    [
+                        ("vless://uuid@203.0.113.1:443#Tokyo", 0.1, "vless"),
+                        ("trojan://secret@203.0.113.2:443#HongKong", 0.2, "trojan"),
+                    ],
+                )
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["tcp_reachable"], 2)
+            self.assertEqual(data["region_counts"], {"HK": 1, "JP": 1})
+            self.assertEqual(data["protocol_counts"], {"trojan": 1, "vless": 1})
+            self.assertEqual(data["measurement"], "tcp_connect_only")
+            self.assertNotIn("203.0.113.1", report_path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
