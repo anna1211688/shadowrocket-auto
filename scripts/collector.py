@@ -347,11 +347,32 @@ def test_node(line: str):
         return "timeout", line, None, protocol
 
 
+def is_allowed_source_url(url: str) -> bool:
+    """仅允许可信的 raw GitHub 源，避免配置/重定向把采集器变成 SSRF 代理。"""
+    if not isinstance(url, str) or len(url) > 2_048:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == "raw.githubusercontent.com"
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment
+        )
+    except (ValueError, TypeError):
+        return False
+
+
 def fetch_source(url: str) -> list[str]:
+    if not is_allowed_source_url(url):
+        print('[源拒绝] 仅允许 HTTPS raw.githubusercontent.com')
+        return []
     last_error = None
     for attempt in range(1 + SOURCE_RETRIES):
         try:
-            with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=True) as resp:
+            with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
                 resp.raise_for_status()
                 length = resp.headers.get("Content-Length")
                 if length and int(length) > MAX_SOURCE_BYTES:
