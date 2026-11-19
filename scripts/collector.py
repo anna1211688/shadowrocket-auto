@@ -3,7 +3,9 @@ import json
 import os
 import re
 import socket
+import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -12,136 +14,201 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 
-TIMEOUT = 3
-MAX_NODES = 100
+# ============ 可配置参数 ============
+TIMEOUT = 4.5                 # TCP 连接超时（秒）
+MAX_NODES = 120               # 最终保留节点数
+MAX_WORKERS = 40              # 并发测试数量
+SOURCE_TIMEOUT = 12           # 拉取订阅源超时
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+# ====================================
 
 
-def decode_base64(value):
+def decode_base64(value: str) -> str:
     value = value.strip()
     value += "=" * (-len(value) % 4)
     try:
-        return base64.urlsafe_b64decode(value).decode("utf-8")
+        return base64.urlsafe_b64decode(value).decode("utf-8", errors="ignore")
     except Exception:
-        return ""
+        try:
+            return base64.b64decode(value).decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
 
 
-def decode_subscription(content):
+def decode_subscription(content: str) -> list[str]:
     content = content.strip()
+    if not content:
+        return []
 
     decoded = decode_base64(content)
-    if decoded and "://" in decoded:
+    if decoded and ("://" in decoded or "\n" in decoded):
         content = decoded
 
-    return content.splitlines()
+    return [line.strip() for line in content.splitlines() if line.strip()]
 
 
-def get_endpoint(line):
+def get_protocol(line: str) -> str | None:
+    m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic)://", line, re.I)
+    return m.group(1).lower() if m else None
+
+
+def get_endpoint(line: str):
+    """返回 (protocol, host, port) 或 (None, None, None)"""
     line = line.strip()
-
-    if line.startswith("vmess://"):
-        raw = decode_base64(line[8:].split("#")[0])
-        try:
-            data = json.loads(raw)
-            return data.get("add"), int(data.get("port", 0))
-        except Exception:
-            return None, None
-
-    if line.startswith(("vless://", "trojan://")):
-        try:
-            parsed = urllib.parse.urlsplit(line)
-            return parsed.hostname, parsed.port
-        except Exception:
-            return None, None
-
-    if line.startswith("ss://"):
-        try:
-            value = line[5:].split("#")[0].split("?")[0]
-
-            if "@" in value:
-                endpoint = value.rsplit("@", 1)[1]
-            else:
-                decoded = decode_base64(value)
-                endpoint = decoded.rsplit("@", 1)[-1]
-
-            parsed = urllib.parse.urlsplit("//" + endpoint)
-            return parsed.hostname, parsed.port
-        except Exception:
-            return None, None
-
-    return None, None
-
-
-def reachable(host, port):
-    if not host or not port or not (1 <= port <= 65535):
-        return False
+    protocol = get_protocol(line)
+    if not protocol:
+        return None, None, None
 
     try:
-        with socket.create_connection((host, port), timeout=TIMEOUT):
-            return True
+        if protocol == "vmess":
+            raw = decode_base64(line[8:].split("#")[0].split("?")[0])
+            data = json.loads(raw)
+            host = data.get("add") or data.get("host")
+            port = int(data.get("port", 0))
+            return protocol, host, port
+
+        if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic"):
+            # 统一用 urlsplit 处理
+            parsed = urllib.parse.urlsplit(line)
+            host = parsed.hostname
+            port = parsed.port
+            if host and port:
+                return protocol, host, port
+            return None, None, None
+
+        if protocol == "ss":
+            # ss://method:password@host:port 或 ss://base64@host:port 或 ss://base64
+            body = line[5:].split("#")[0].split("?")[0]
+
+            if "@" in body:
+                # 已经是 method:pass@host:port 形式（可能经过一次解码）
+                userinfo, endpoint = body.rsplit("@", 1)
+            else:
+                # 整体是 base64
+                decoded = decode_base64(body)
+                if "@" not in decoded:
+                    return None, None, None
+                userinfo, endpoint = decoded.rsplit("@", 1)
+
+            # endpoint 可能是 host:port 或 [ipv6]:port
+            if endpoint.startswith("["):
+                # IPv6
+                host_port = endpoint[1:].split("]")
+                host = host_port[0]
+                port = int(host_port[1].lstrip(":")) if len(host_port) > 1 else 0
+            else:
+                host, _, port_str = endpoint.rpartition(":")
+                port = int(port_str) if port_str.isdigit() else 0
+
+            return protocol, host, port
+
     except Exception:
-        return False
+        return None, None, None
+
+    return None, None, None
+
+
+def test_node(line: str) -> tuple[str, float] | None:
+    """测试节点可达性，返回 (原始链接, 延迟秒) 或 None"""
+    protocol, host, port = get_endpoint(line)
+    if not host or not port or not (1 <= port <= 65535):
+        return None
+
+    start = time.perf_counter()
+    try:
+        with socket.create_connection((host, port), timeout=TIMEOUT):
+            latency = time.perf_counter() - start
+            return line, latency
+    except Exception:
+        return None
+
+
+def fetch_source(url: str) -> list[str]:
+    try:
+        resp = requests.get(
+            url,
+            timeout=SOURCE_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        )
+        resp.raise_for_status()
+        return decode_subscription(resp.text)
+    except Exception as e:
+        print(f"[源失败] {url} -> {e}")
+        return []
 
 
 def main():
+    # 1. 读取源列表
     sources = []
-
     if SOURCES.exists():
-        for line in SOURCES.read_text(
-            encoding="utf-8"
-        ).splitlines():
+        for line in SOURCES.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#"):
                 sources.append(line)
 
-    nodes = []
-    seen = set()
+    print(f"共 {len(sources)} 个订阅源")
 
+    # 2. 拉取所有节点（先不去重）
+    raw_nodes: list[str] = []
     for url in sources:
-        try:
-            response = requests.get(
-                url,
-                timeout=15,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            response.raise_for_status()
+        nodes = fetch_source(url)
+        print(f"  拉取到 {len(nodes)} 条: {url}")
+        raw_nodes.extend(nodes)
 
-            for line in decode_subscription(response.text):
-                line = line.strip()
+    # 3. 初步过滤 + 按 (protocol, host, port) 去重
+    candidates = []
+    seen_keys = set()
 
-                if not re.match(
-                    r"^(ss|vmess|vless|trojan)://",
-                    line
-                ):
-                    continue
+    for line in raw_nodes:
+        protocol, host, port = get_endpoint(line)
+        if not protocol or not host or not port:
+            continue
 
-                if line in seen:
-                    continue
+        key = (protocol, host.lower(), port)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        candidates.append(line)
 
-                host, port = get_endpoint(line)
+    print(f"去重后候选节点: {len(candidates)}")
 
-                if reachable(host, port):
-                    seen.add(line)
-                    nodes.append(line)
-
-                if len(nodes) >= MAX_NODES:
-                    break
-
-        except Exception as error:
-            print("Source failed:", error)
-
-    if not nodes:
-        print("No usable nodes. Keeping previous subscription.")
+    if not candidates:
+        print("没有可用候选节点，保留旧订阅。")
         return
 
+    # 4. 并行测试可达性 + 记录延迟
+    print(f"开始并行测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s）...")
+    alive: list[tuple[str, float]] = []
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(test_node, line): line for line in candidates}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                alive.append(result)
+
+    print(f"存活节点: {len(alive)}")
+
+    if not alive:
+        print("没有检测到存活节点，保留旧订阅。")
+        return
+
+    # 5. 按延迟排序，取前 MAX_NODES
+    alive.sort(key=lambda x: x[1])
+    selected = [line for line, _ in alive[:MAX_NODES]]
+
+    # 打印前几名延迟
+    print("延迟最低的 5 个节点:")
+    for line, lat in alive[:5]:
+        proto, host, port = get_endpoint(line)
+        print(f"  {lat*1000:.0f}ms  {proto}://{host}:{port}")
+
+    # 6. 写入 base64 订阅
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-
-    content = base64.b64encode(
-        "\n".join(nodes).encode("utf-8")
-    ).decode("ascii")
-
+    content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     OUTPUT.write_text(content + "\n", encoding="utf-8")
 
-    print("Published nodes:", len(nodes))
+    print(f"已发布节点: {len(selected)} 个 → {OUTPUT}")
 
 
 if __name__ == "__main__":
