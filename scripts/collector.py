@@ -67,14 +67,73 @@ def get_protocol(line: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
-def is_public_ip(host: str) -> bool:
-    """过滤私有、回环、保留地址"""
+def resolve_public_addresses(host: str) -> list[tuple]:
+    """解析主机并拒绝任何包含非公网地址的 DNS 结果。
+
+    返回 getaddrinfo 地址项，后续连接直接使用解析结果，避免二次 DNS 解析。
+    """
     try:
-        ip = ipaddress.ip_address(host)
-        return ip.is_global
+        literal = ipaddress.ip_address(host)
+        if not literal.is_global:
+            return []
+        return socket.getaddrinfo(str(literal), None, type=socket.SOCK_STREAM)
     except ValueError:
-        # 域名视为可用（后续 TCP 测试会验证）
-        return True
+        pass
+
+    try:
+        results = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError, OSError):
+        return []
+
+    if not results:
+        return []
+    # 混合公网/内网解析也整体拒绝，避免客户端或系统选择到内网地址。
+    for family, _, _, _, sockaddr in results:
+        try:
+            if not ipaddress.ip_address(sockaddr[0]).is_global:
+                return []
+        except ValueError:
+            return []
+    return results
+
+
+def is_public_ip(host: str) -> bool:
+    """仅接受字面公网 IP，域名必须通过 resolve_public_addresses 校验。"""
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return bool(resolve_public_addresses(host))
+
+
+def get_dedup_key(line: str):
+    """区分同端点但凭据/传输参数不同的节点，同时忽略节点备注。"""
+    protocol, host, port = get_endpoint(line)
+    if not protocol or not host or not port:
+        return None
+
+    try:
+        if protocol == "vmess":
+            raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
+            data = json.loads(raw)
+            for label in ("ps", "remark", "name"):
+                data.pop(label, None)
+            identity = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        else:
+            parsed = urllib.parse.urlsplit(line)
+            query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            query.sort()
+            identity = json.dumps({
+                "username": parsed.username,
+                "password": parsed.password,
+                "path": parsed.path,
+                "query": query,
+            }, sort_keys=True, separators=(",", ":"))
+            # 旧式 SIP002/base64 SS URI 无法从 urlsplit 可靠拆分凭据，保留其完整主体。
+            if protocol == "ss" and not parsed.hostname:
+                identity = line.split("#", 1)[0].strip()
+        return (protocol, host.lower(), int(port), identity)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return (protocol, host.lower(), int(port), line.split("#", 1)[0].strip())
 
 
 def get_endpoint(line: str):
@@ -140,16 +199,29 @@ def test_node(line: str):
     if not protocol or not host or not port or not (1 <= port <= 65535):
         return "invalid", line, None, None
 
-    if not is_public_ip(host):
+    addresses = resolve_public_addresses(host)
+    if not addresses:
         return "private", line, None, protocol
 
     start = time.perf_counter()
     try:
-        with socket.create_connection((host, port), timeout=TIMEOUT):
-            latency = time.perf_counter() - start
-            if latency > MAX_LATENCY:
-                return "slow", line, latency, protocol
-            return "ok", line, latency, protocol
+        connected = False
+        for family, socktype, proto, _, sockaddr in addresses:
+            target = (sockaddr[0], port, *sockaddr[2:]) if family == socket.AF_INET6 else (sockaddr[0], port)
+            try:
+                with socket.socket(family, socktype, proto) as sock:
+                    sock.settimeout(TIMEOUT)
+                    sock.connect(target)
+                connected = True
+                break
+            except OSError:
+                continue
+        if not connected:
+            return "timeout", line, None, protocol
+        latency = time.perf_counter() - start
+        if latency > MAX_LATENCY:
+            return "slow", line, latency, protocol
+        return "ok", line, latency, protocol
     except (socket.timeout, TimeoutError):
         return "timeout", line, None, protocol
     except Exception:
@@ -201,11 +273,12 @@ def main():
         protocol, host, port = get_endpoint(line)
         if not protocol or not host or not port:
             continue
+        # 域名在 test_node 中做 DNS 公网校验；这里仅排除明确的非公网 IP 字面量。
         if not is_public_ip(host):
             continue
 
-        key = (protocol, host.lower(), port)
-        if key in seen_keys:
+        key = get_dedup_key(line)
+        if key is None or key in seen_keys:
             continue
         seen_keys.add(key)
         candidates.append(line)
