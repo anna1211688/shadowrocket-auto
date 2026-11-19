@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -268,15 +269,32 @@ def _singbox_error_kind(output):
 
 
 def _exception_diagnostic(exc):
-    """Expose exception class and numeric network/HTTP codes, never raw URLs or credentials."""
-    detail = {"error_type": type(exc).__name__}
-    code = getattr(exc, "code", None)
-    if isinstance(code, int):
-        detail["http_status"] = code
+    """Expose safe error categories and numeric codes, never raw URLs or credentials."""
+    import urllib.error
+
     reason = getattr(exc, "reason", None)
-    errno = getattr(reason, "errno", None) or getattr(exc, "errno", None)
-    if isinstance(errno, int):
+    nested = reason if isinstance(reason, BaseException) else exc
+    errno = getattr(nested, "errno", None) or getattr(exc, "errno", None)
+    detail = {"error_type": type(exc).__name__}
+    if isinstance(exc, urllib.error.HTTPError):
+        detail["http_status"] = int(exc.code)
+        detail["reason"] = "http_error"
+    elif isinstance(errno, int):
         detail["errno"] = errno
+        detail["reason"] = {
+            104: "connection_reset",
+            111: "connection_refused",
+            110: "connection_timeout",
+            101: "network_unreachable",
+            113: "no_route_to_host",
+            99: "address_not_available",
+        }.get(errno, "socket_error")
+    elif isinstance(exc, (TimeoutError, socket.timeout)):
+        detail["reason"] = "timeout"
+    elif isinstance(exc, urllib.error.URLError):
+        detail["reason"] = "proxy_or_tls_connection_error"
+    else:
+        detail["reason"] = type(exc).__name__.lower()
     return detail
 
 
@@ -343,27 +361,63 @@ def measure_node(uri, binary):
                         "reason": diagnostic,
                     }
 
-                stage = "proxy_https_request"
                 proxy = urllib.request.ProxyHandler({
                     "http": f"http://127.0.0.1:{port}",
                     "https": f"http://127.0.0.1:{port}",
                 })
                 opener = urllib.request.build_opener(proxy)
                 rates = []
-                for _ in range(SPEED_TEST_SAMPLES):
+                for sample_index in range(SPEED_TEST_SAMPLES):
                     request = urllib.request.Request(
                         DOWNLOAD_URL,
                         headers={"User-Agent": "shadowrocket-auto-speedtest/1.0", "Cache-Control": "no-cache"},
                     )
                     sample_start = time.monotonic()
-                    with opener.open(request, timeout=SPEED_TEST_TIMEOUT) as response:
-                        stage = "response_validation"
+                    stage = "proxy_tunnel_connect"
+                    try:
+                        response = opener.open(request, timeout=SPEED_TEST_TIMEOUT)
+                    except Exception as exc:
+                        diagnostic = _exception_diagnostic(exc)
+                        stderr_file.flush()
+                        stderr_file.seek(0)
+                        diagnostic["singbox_error"] = _singbox_error_kind(stderr_file.read())
+                        return {
+                            "status": "proxy_connect_failed",
+                            "stage": stage,
+                            "sample": sample_index + 1,
+                            **diagnostic,
+                        }
+                    with response:
+                        stage = "http_response"
                         if response.status != 200:
-                            raise OSError(f"speed endpoint HTTP {response.status}")
-                        payload = response.read(SPEED_TEST_BYTES + 1)
+                            return {
+                                "status": "http_status_failed",
+                                "stage": stage,
+                                "sample": sample_index + 1,
+                                "http_status": int(response.status),
+                            }
+                        stage = "proxy_download_read"
+                        try:
+                            payload = response.read(SPEED_TEST_BYTES + 1)
+                        except Exception as exc:
+                            diagnostic = _exception_diagnostic(exc)
+                            stderr_file.flush()
+                            stderr_file.seek(0)
+                            diagnostic["singbox_error"] = _singbox_error_kind(stderr_file.read())
+                            return {
+                                "status": "download_read_failed",
+                                "stage": stage,
+                                "sample": sample_index + 1,
+                                **diagnostic,
+                            }
                     elapsed = time.monotonic() - sample_start
                     if len(payload) != SPEED_TEST_BYTES or elapsed <= 0:
-                        raise OSError("incomplete speed-test payload")
+                        return {
+                            "status": "incomplete_download",
+                            "stage": "download_validation",
+                            "sample": sample_index + 1,
+                            "reason": "payload_size_mismatch",
+                        }
                     rates.append((len(payload) * 8) / elapsed / 1_000_000)
                 rates.sort()
                 median = rates[len(rates) // 2] if len(rates) % 2 else sum(rates) / 2
@@ -389,14 +443,43 @@ def measure_node(uri, binary):
                 process.kill()
                 process.wait(timeout=2)
 
+def _balanced_speed_shortlist(nodes, limit):
+    """Round-robin protocols so one popular protocol cannot consume every test slot."""
+    buckets = {}
+    unsupported = []
+    for uri in nodes:
+        try:
+            build_outbound(uri)
+        except UnsupportedNode as exc:
+            unsupported.append((uri, {
+                "status": "unsupported",
+                "stage": "preflight",
+                "reason": str(exc),
+            }))
+            continue
+        protocol = collector.get_endpoint(uri)[0] or "unknown"
+        buckets.setdefault(protocol, []).append(uri)
+
+    selected = []
+    protocols = sorted(buckets)
+    while len(selected) < limit and protocols:
+        remaining = []
+        for protocol in protocols:
+            if buckets[protocol] and len(selected) < limit:
+                selected.append(buckets[protocol].pop(0))
+            if buckets[protocol]:
+                remaining.append(protocol)
+        protocols = remaining
+    return selected, unsupported
+
+
 def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT):
-    """Speed-test a bounded shortlist; return URI/result pairs in measured Mbps order."""
-    results = []
-    shortlist = nodes[:limit]
+    """Speed-test a bounded, protocol-balanced shortlist; return URI/result pairs."""
+    shortlist, results = _balanced_speed_shortlist(nodes, limit)
     deadline = time.monotonic() + SPEED_TEST_TOTAL_SECONDS
     for uri in shortlist:
         if time.monotonic() >= deadline:
-            results.append((uri, {"status": "skipped_budget", "reason": "round time budget exhausted"}))
+            results.append((uri, {"status": "skipped_budget", "stage": "scheduler", "reason": "round_budget_exhausted"}))
             continue
         result = measure_node(uri, binary)
         results.append((uri, result))
