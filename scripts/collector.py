@@ -276,6 +276,53 @@ def cn_tier(line: str) -> int:
     return 2
 
 
+# 测速名额按档位分配：A 档多给，但保留 B/C 保底名额。实测教训（2026-11-20）：
+# A 档公开节点真实隧道通过率极低，名额全押 A 档时订阅只剩 3 个 C 档节点；
+# 反过来纯按速度选又全是大陆基本连不上的 SS。配额制是两者的折中。
+TIER_TCP_QUOTAS = {0: 40, 1: 16, 2: 16}
+SPEED_TCP_LIMIT = 72
+SPEED_UDP_LIMIT = 8
+
+
+def _round_robin_by_protocol(entries: list[tuple], limit: int) -> list[str]:
+    protocol_buckets: dict[str, list[tuple]] = {}
+    for entry in entries:
+        protocol_buckets.setdefault(entry[2], []).append(entry)
+    selected: list[str] = []
+    protocol_order = sorted(protocol_buckets)
+    while len(selected) < limit and protocol_order:
+        remaining = []
+        for protocol in protocol_order:
+            if protocol_buckets[protocol] and len(selected) < limit:
+                selected.append(protocol_buckets[protocol].pop(0)[0])
+            if protocol_buckets[protocol]:
+                remaining.append(protocol)
+        protocol_order = remaining
+    return selected
+
+
+def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str]):
+    """按档位配额选 TCP 测速名单；某档不足时，剩余名额按 A→B→C 顺序补位。"""
+    tier_entries: dict[int, list[tuple]] = {}
+    for entry in alive:
+        tier_entries.setdefault(cn_tier(entry[0]), []).append(entry)
+    tcp_shortlist: list[str] = []
+    leftovers: dict[int, list[tuple]] = {}
+    for tier in (0, 1, 2):
+        entries = tier_entries.get(tier, [])
+        picked = _round_robin_by_protocol(entries, TIER_TCP_QUOTAS[tier])
+        tcp_shortlist.extend(picked)
+        picked_lines = set(picked)
+        leftovers[tier] = [entry for entry in entries if entry[0] not in picked_lines]
+    for tier in (0, 1, 2):
+        if len(tcp_shortlist) >= SPEED_TCP_LIMIT:
+            break
+        tcp_shortlist.extend(
+            _round_robin_by_protocol(leftovers[tier], SPEED_TCP_LIMIT - len(tcp_shortlist))
+        )
+    return tcp_shortlist, udp_candidates[:SPEED_UDP_LIMIT]
+
+
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          alive: list[tuple],
                          subscription_status: str = "preserved_previous",
@@ -704,30 +751,10 @@ def main():
         print("没有可进行协议级测速的节点，保留旧订阅。")
         return
 
-    # 5. TCP 延迟只用于缩小候选范围。测速名单按大陆可用性档位优先
-    # （A: Reality / 443 TLS，B: 其他 TLS，C: 其余），档内按协议轮转、
-    # 再按延迟，让 80 个测速名额先花在大陆最可能连通的节点上。
+    # 5. TCP 延迟只用于缩小候选范围；测速名单按档位配额选（见
+    # select_speed_shortlist），订阅排序先档位、再实测 Mbps。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    tier_buckets: dict[int, list[tuple]] = {}
-    for entry in alive:
-        tier_buckets.setdefault(cn_tier(entry[0]), []).append(entry)
-    tcp_shortlist: list[str] = []
-    for tier in sorted(tier_buckets):
-        protocol_buckets: dict[str, list[tuple]] = {}
-        for entry in tier_buckets[tier]:
-            protocol_buckets.setdefault(entry[2], []).append(entry)
-        protocol_order = sorted(protocol_buckets)
-        while len(tcp_shortlist) < 72 and protocol_order:
-            remaining_protocols = []
-            for protocol in protocol_order:
-                if protocol_buckets[protocol] and len(tcp_shortlist) < 72:
-                    tcp_shortlist.append(protocol_buckets[protocol].pop(0)[0])
-                if protocol_buckets[protocol]:
-                    remaining_protocols.append(protocol)
-            protocol_order = remaining_protocols
-        if len(tcp_shortlist) >= 72:
-            break
-    udp_shortlist = udp_candidates[:8]
+    tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates)
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil

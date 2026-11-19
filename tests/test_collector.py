@@ -299,6 +299,41 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(collector.cn_tier(tls443), 1)
         self.assertEqual(collector.cn_tier(plain), 2)
 
+    @staticmethod
+    def _entry(line, protocol):
+        return (line, 0.1, protocol, 0.01)
+
+    def test_shortlist_respects_tier_quotas(self):
+        alive = []
+        for i in range(50):
+            alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
+        for i in range(20):
+            alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
+        ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
+        for i in range(20):
+            alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
+        udp = [f"hy2://secret@u{i}.example:443" for i in range(10)]
+        tcp, udp_short = collector.select_speed_shortlist(alive, udp)
+        tiers = [collector.cn_tier(line) for line in tcp]
+        self.assertEqual(len(tcp), 72)
+        self.assertEqual(tiers.count(0), 40)
+        self.assertEqual(tiers.count(1), 16)
+        self.assertEqual(tiers.count(2), 16)
+        self.assertEqual(len(udp_short), 8)
+
+    def test_shortlist_backfills_from_lower_tiers(self):
+        alive = []
+        for i in range(5):
+            alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
+        ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
+        for i in range(100):
+            alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
+        tcp, _ = collector.select_speed_shortlist(alive, [])
+        tiers = [collector.cn_tier(line) for line in tcp]
+        self.assertEqual(len(tcp), 72)
+        self.assertEqual(tiers.count(0), 5)
+        self.assertEqual(tiers.count(2), 67)
+
     def test_ss_and_hy2_are_tier_c(self):
         userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         self.assertEqual(collector.cn_tier(f"ss://{userinfo}@example.com:8388"), 2)
