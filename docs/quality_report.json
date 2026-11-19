@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-19T13:50:50.174131+00:00",
+  "generated_at": "2026-11-19T14:13:17.903724+00:00",
   "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
   "ranking": "measured_proxy_download_mbps_descending",
   "speed_test": {
@@ -17,16 +17,16 @@
   "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
   "subscription_status": "preserved_previous",
   "raw_nodes": 5448,
-  "unique_candidates": 4473,
-  "tcp_reachable": 2778,
+  "unique_candidates": 4472,
+  "tcp_reachable": 2744,
   "udp_unverified": 217,
   "rejected": {
-    "ok": 2778,
+    "ok": 2744,
     "slow": 0,
-    "timeout": 1358,
+    "timeout": 1389,
     "invalid": 127,
-    "private": 140,
-    "duplicate": 828,
+    "private": 142,
+    "duplicate": 829,
     "udp_unverified": 217,
     "skipped_limit": 0,
     "proxy_speed_tested": 25,
@@ -35,28 +35,28 @@
     "proxy_speed_failed_or_unsupported": 25
   },
   "protocol_counts": {
-    "ss": 299,
-    "trojan": 361,
-    "vless": 1664,
-    "vmess": 454
+    "ss": 305,
+    "trojan": 359,
+    "vless": 1633,
+    "vmess": 447
   },
   "region_counts": {
-    "DE": 105,
-    "GB": 62,
-    "HK": 20,
+    "DE": 89,
+    "GB": 65,
+    "HK": 17,
     "JP": 25,
-    "KR": 11,
-    "OTHER": 2307,
+    "KR": 12,
+    "OTHER": 2293,
     "SG": 45,
     "TW": 2,
-    "US": 201
+    "US": 196
   },
   "latency_ms": {
-    "min": 5.2,
-    "average": 90.5,
-    "p50": 61.6,
-    "p95": 225.1,
-    "jitter_average": 40.5,
-    "jitter_p95": 41.4
+    "min": 8.0,
+    "average": 94.9,
+    "p50": 49.6,
+    "p95": 202.7,
+    "jitter_average": 44.3,
+    "jitter_p95": 38.7
   }
 }
