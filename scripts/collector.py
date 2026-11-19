@@ -622,8 +622,8 @@ def main():
 
     # 5. TCP 延迟只用于缩小候选范围；最终订阅严格按真实代理隧道下载 Mbps 排名。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    tcp_shortlist = [entry[0] for entry in alive[:12]]
-    udp_shortlist = udp_candidates[:3]
+    tcp_shortlist = [entry[0] for entry in alive[:20]]
+    udp_shortlist = udp_candidates[:5]
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil
