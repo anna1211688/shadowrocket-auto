@@ -1,5 +1,22 @@
+# Shadowrocket-auto 订阅源列表
+# 每行一个 URL，支持 # 注释
+# 优先选择长期稳定的 raw.githubusercontent.com 源
+
+# ===== 原有源 =====
 https://raw.githubusercontent.com/free18/v2ray/refs/heads/main/v.txt
 https://raw.githubusercontent.com/free-nodes/v2rayfree/main/sub
 https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/Eternity.txt
 https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt
 https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt
+
+# ===== 新增较稳定源 =====
+https://raw.githubusercontent.com/Alirewa/V2ray-Configs/main/sub1.txt
+https://raw.githubusercontent.com/Alirewa/V2ray-Configs/main/config.txt
+https://raw.githubusercontent.com/mehrtat/vless-collector/main/sub.txt
+https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/main/all_extracted_configs.txt
+https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/v2ray-base64.txt
+https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2
+https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+https://raw.githubusercontent.com/mfuu/v2ray/master/v2ray
+https://raw.githubusercontent.com/freefq/free/master/v2
+https://raw.githubusercontent.com/ssrsub/ssr/master/v2ray
