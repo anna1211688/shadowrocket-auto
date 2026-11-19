@@ -403,7 +403,14 @@ def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT):
         if result.get("status") == "ok":
             print(f"[实测测速] {result['download_mbps']:.2f} Mbps")
         else:
-            print(f"[测速跳过/失败] {result.get('status')}")
+            print(
+                f"[测速失败] status={result.get('status')} "
+                f"stage={result.get('stage', 'unknown')} "
+                f"reason={result.get('reason', 'n/a')} "
+                f"error_type={result.get('error_type', 'n/a')} "
+                f"http_status={result.get('http_status', 'n/a')} "
+                f"errno={result.get('errno', 'n/a')}"
+            )
     successful = [(uri, result) for uri, result in results if result.get("status") == "ok"]
     successful.sort(key=lambda item: item[1]["download_mbps"], reverse=True)
     return successful, results
