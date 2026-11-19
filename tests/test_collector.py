@@ -170,16 +170,47 @@ class SourceUrlSecurityTests(unittest.TestCase):
         })()
         with patch.object(collector, "SOURCE_RETRIES", 0), \
              patch("scripts.collector.requests.get", return_value=manager), \
-             patch("scripts.collector.time.monotonic", side_effect=[0.0, collector.SOURCE_DEADLINE + 1]):
+             patch("scripts.collector.time.monotonic", side_effect=[0.0, 0.0, collector.SOURCE_DEADLINE + 1]):
             self.assertEqual(
                 collector.fetch_source("https://raw.githubusercontent.com/owner/repo/main/list.txt"),
                 [],
             )
 
+    @patch("scripts.collector.time.sleep")
+    @patch("scripts.collector.time.monotonic", side_effect=[0.0, 0.0, 0.0, collector.SOURCE_DEADLINE + 1])
+    @patch("scripts.collector.requests.get", side_effect=collector.requests.Timeout("temporary timeout"))
+    def test_retries_share_one_total_deadline(self, mocked_get, mocked_monotonic, mocked_sleep):
+        self.assertEqual(
+            collector.fetch_source("https://raw.githubusercontent.com/owner/repo/main/list.txt"),
+            [],
+        )
+        mocked_get.assert_called_once()
+        mocked_sleep.assert_called_once_with(1.0)
+
     @patch("scripts.collector.requests.get")
     def test_rejects_untrusted_source_before_network_request(self, mocked_get):
         self.assertEqual(collector.fetch_source("http://127.0.0.1/secret"), [])
         mocked_get.assert_not_called()
+
+
+class AtomicFileWriteTests(unittest.TestCase):
+    def test_atomically_replaces_existing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "artifact.txt"
+            target.write_text("old", encoding="utf-8")
+            collector.atomic_write_text(target, "new")
+            self.assertEqual(target.read_text(encoding="utf-8"), "new")
+            self.assertEqual(list(Path(directory).glob(".artifact.txt.*.tmp")), [])
+
+    def test_failed_replace_preserves_previous_file_and_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "artifact.txt"
+            target.write_text("old", encoding="utf-8")
+            with patch("scripts.collector.os.replace", side_effect=OSError("disk error")):
+                with self.assertRaises(OSError):
+                    collector.atomic_write_text(target, "new")
+            self.assertEqual(target.read_text(encoding="utf-8"), "old")
+            self.assertEqual(list(Path(directory).glob(".artifact.txt.*.tmp")), [])
 
 
 class AdversarialInputTests(unittest.TestCase):
