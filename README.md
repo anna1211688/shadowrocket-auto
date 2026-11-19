@@ -1,6 +1,6 @@
 # shadowrocket-auto
 
-自动收集公共节点并生成 Shadowrocket 订阅。
+自动收集公共节点，并在本地生成 Shadowrocket 订阅。
 
 ## 订阅发布状态
 
