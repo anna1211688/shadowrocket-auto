@@ -21,8 +21,8 @@ try:
 except ImportError:  # direct execution from scripts/collector.py
     import collector
 
-SPEED_TEST_LIMIT = 25
-SPEED_TEST_TOTAL_SECONDS = 360
+SPEED_TEST_LIMIT = 80
+SPEED_TEST_TOTAL_SECONDS = 600
 SPEED_TEST_BYTES = 262144
 SPEED_TEST_SAMPLES = 2
 SPEED_TEST_TIMEOUT = 12
