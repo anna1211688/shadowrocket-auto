@@ -51,20 +51,20 @@ class PublicAddressValidationTests(unittest.TestCase):
     @patch("scripts.collector.socket.getaddrinfo")
     @patch("scripts.collector.subprocess.run")
     def test_rejects_domain_resolving_to_loopback(self, mocked_run, mocked_getaddrinfo):
-        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "127.0.0.1 STREAM internal.example\\n"})()
+        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "127.0.0.1 STREAM internal.example\n"})()
         self.assertEqual(collector.resolve_public_addresses("internal.example"), [])
 
     @patch("scripts.collector.socket.getaddrinfo")
     @patch("scripts.collector.subprocess.run")
     def test_accepts_domain_resolving_to_public_ip(self, mocked_run, mocked_getaddrinfo):
         expected = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
-        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "8.8.8.8 STREAM dns.example\\n"})()
+        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "8.8.8.8 STREAM dns.example\n"})()
         mocked_getaddrinfo.return_value = expected
         self.assertEqual(collector.resolve_public_addresses("dns.example"), expected)
 
     @patch("scripts.collector.subprocess.run")
     def test_rejects_mixed_public_and_private_dns_answers(self, mocked_run):
-        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "8.8.8.8 STREAM mixed.example\\n10.0.0.5 STREAM mixed.example\\n"})()
+        mocked_run.return_value = type("Result", (), {"returncode": 0, "stdout": "8.8.8.8 STREAM mixed.example\n10.0.0.5 STREAM mixed.example\n"})()
         self.assertEqual(collector.resolve_public_addresses("mixed.example"), [])
 
     def test_rejects_private_ip_literal(self):
@@ -161,7 +161,8 @@ class AdversarialInputTests(unittest.TestCase):
 
     @patch("scripts.collector.subprocess.run", side_effect=collector.subprocess.TimeoutExpired(cmd="getent", timeout=collector.DNS_TIMEOUT))
     def test_dns_timeout_is_contained(self, mocked):
-        self.assertEqual(collector.resolve_public_addresses("unresolved.example"), [])
+        with self.assertRaises(collector.DNSResolutionTimeout):
+            collector.resolve_public_addresses("unresolved.example")
         mocked.assert_called_once()
 
     def test_single_bad_node_does_not_raise(self):
