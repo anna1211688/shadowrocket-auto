@@ -15,7 +15,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from scripts import collector
+try:
+    from . import collector
+except ImportError:  # direct execution from scripts/collector.py
+    import collector
 
 SPEED_TEST_LIMIT = 25
 SPEED_TEST_TOTAL_SECONDS = 360
