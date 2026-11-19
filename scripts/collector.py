@@ -300,6 +300,19 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 "p95": percentile(sorted(speed_values), 0.95),
             },
             "top_nodes": speed_nodes,
+            "failure_diagnostics": [
+                {
+                    "protocol": get_endpoint(uri)[0],
+                    "status": result.get("status"),
+                    "stage": result.get("stage", "unknown"),
+                    "reason": result.get("reason", result.get("error_type", "unknown")),
+                    **({"error_type": result["error_type"]} if result.get("error_type") else {}),
+                    **({"http_status": result["http_status"]} if result.get("http_status") else {}),
+                    **({"errno": result["errno"]} if result.get("errno") else {}),
+                }
+                for uri, result in speed_results
+                if result.get("status") != "ok"
+            ][:25],
         },
         "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
         "subscription_status": subscription_status,
