@@ -20,7 +20,9 @@ QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
 # ============ 可配置参数 ============
 TIMEOUT = 3.0                 # TCP 连接超时（秒）
-MAX_LATENCY = 2.5             # 最大可接受延迟（秒）
+MAX_LATENCY = 2.5             # 最大可接受 TCP 建连延迟（秒）
+TCP_SAMPLES = 3
+MIN_SUCCESSFUL_SAMPLES = 2
 MAX_NODES = 150               # 最终保留节点数
 MAX_WORKERS = 30
 NODE_DEADLINE = 5.0
@@ -377,49 +379,45 @@ def get_endpoint(line: str):
 
 
 def test_node(line: str):
-    """
-    返回:
-      ("ok", line, latency, protocol)
-      ("slow", line, latency, protocol)
-      ("timeout", line, None, protocol)
-      ("invalid", line, None, None)
-      ("private", line, None, protocol)
-    """
+    """TCP 节点多次采样；UDP 代理协议不冒充 TCP 可用节点。"""
+    import statistics
     protocol, host, port = get_endpoint(line)
     if not protocol or not host or not port or not (1 <= port <= 65535):
-        return "invalid", line, None, None
-
+        return "invalid", line, None, None, None
+    if protocol in ("hysteria", "hysteria2", "hy2", "tuic"):
+        return "udp_unverified", line, None, protocol, None
     try:
         addresses = resolve_public_addresses(host)
         if not addresses:
-            return "private", line, None, protocol
-        start = time.perf_counter()
-        deadline = start + NODE_DEADLINE
-        connected = False
-        for family, socktype, proto, _, sockaddr in addresses:
-            remaining = deadline - time.perf_counter()
-            if remaining <= 0:
-                return "timeout", line, None, protocol
-            target = (sockaddr[0], port, *sockaddr[2:]) if family == socket.AF_INET6 else (sockaddr[0], port)
-            try:
-                with socket.socket(family, socktype, proto) as sock:
-                    sock.settimeout(min(TIMEOUT, remaining))
-                    sock.connect(target)
-                connected = True
-                break
-            except OSError:
-                continue
-        if not connected:
-            return "timeout", line, None, protocol
-        latency = time.perf_counter() - start
+            return "private", line, None, protocol, None
+        samples = []
+        for _ in range(TCP_SAMPLES):
+            deadline = time.perf_counter() + NODE_DEADLINE
+            for family, socktype, proto, _, sockaddr in addresses:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    break
+                target = (sockaddr[0], port, *sockaddr[2:]) if family == socket.AF_INET6 else (sockaddr[0], port)
+                try:
+                    started = time.perf_counter()
+                    with socket.socket(family, socktype, proto) as sock:
+                        sock.settimeout(min(TIMEOUT, remaining))
+                        sock.connect(target)
+                    samples.append(time.perf_counter() - started)
+                    break
+                except OSError:
+                    continue
+        if len(samples) < MIN_SUCCESSFUL_SAMPLES:
+            return "timeout", line, None, protocol, None
+        latency = statistics.median(samples)
+        jitter = max(samples) - min(samples)
         if latency > MAX_LATENCY:
-            return "slow", line, latency, protocol
-        return "ok", line, latency, protocol
+            return "slow", line, latency, protocol, jitter
+        return "ok", line, latency, protocol, jitter
     except (socket.timeout, TimeoutError, DNSResolutionTimeout):
-        return "timeout", line, None, protocol
+        return "timeout", line, None, protocol, None
     except Exception:
-        return "timeout", line, None, protocol
-
+        return "timeout", line, None, protocol, None
 
 def is_allowed_source_url(url: str) -> bool:
     """仅允许可信的 raw GitHub 源，避免配置/重定向把采集器变成 SSRF 代理。"""
@@ -511,7 +509,7 @@ def main():
             break
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重
-    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
+    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0, "udp_unverified": 0}
     candidates = []
     seen_keys = set()
 
@@ -543,21 +541,21 @@ def main():
     )
 
     # 4. 并行测试 + 分类统计
-    print(f"开始并行 TCP 连通性测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
+    print(f"开始并行 TCP 多次采样（每节点 {TCP_SAMPLES} 次，至少成功 {MIN_SUCCESSFUL_SAMPLES} 次；UDP 协议单独标记未验证）...")
 
-    alive: list[tuple[str, float, str]] = []  # (line, latency, protocol)
+    alive: list[tuple] = []  # (line, median_latency, protocol, jitter)
     if candidates:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(test_node, line) for line in candidates]
             for future in as_completed(futures):
                 try:
-                    status, line, latency, protocol = future.result()
+                    status, line, latency, protocol, jitter = future.result()
                 except Exception:
                     stats["timeout"] += 1
                     continue
                 stats[status] = stats.get(status, 0) + 1
                 if status == "ok":
-                    alive.append((line, latency, protocol))
+                    alive.append((line, latency, protocol, jitter))
 
     if not candidates:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
@@ -571,6 +569,7 @@ def main():
     print(f"  🐢 延迟过高过滤   : {stats['slow']}  (>{MAX_LATENCY}s)")
     print(f"  ⏰ 超时/不可达    : {stats['timeout']}  (>{TIMEOUT}s 或连接失败)")
     print(f"  🔒 私有IP过滤     : {stats['private']}")
+    print(f"  ↪ UDP待协议验证   : {stats['udp_unverified']}")
     print(f"  ❌ 解析失败       : {stats['invalid']}")
     print("-" * 46)
 
@@ -580,14 +579,14 @@ def main():
         print("没有检测到可建立 TCP 连接的节点，保留旧订阅。")
         return
 
-    # 5. 排序：先按延迟，再按协议权重
-    alive.sort(key=lambda x: (x[1], PROTOCOL_WEIGHT.get(x[2], 9)))
-    selected = [line for line, _, _ in alive[:MAX_NODES]]
+    # 5. 排序：先按 TCP 建连中位延迟，再按抖动和协议权重；不代表真实代理吞吐速度。
+    alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
+    selected = [entry[0] for entry in alive[:MAX_NODES]]
 
     print("延迟最低的 8 个节点:")
-    for line, lat, proto in alive[:8]:
+    for line, lat, proto, jitter in alive[:8]:
         _, host, port = get_endpoint(line)
-        print(f"  {lat*1000:.0f}ms  {proto}://{host}:{port}")
+        print(f"  {lat*1000:.0f}ms  抖动 {jitter*1000:.0f}ms  {proto}://{host}:{port}")
 
     # 6. Write the local subscription atomically before reporting it as updated.
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
