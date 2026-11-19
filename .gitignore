@@ -1,0 +1,9 @@
+docs/shadowrocket_plain.txt
+docs/*_plain.txt
+.env
+.env.*
+*.pem
+*.key
+__pycache__/
+*.py[cod]
+.pytest_cache/
