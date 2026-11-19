@@ -15,9 +15,9 @@ SOURCES = ROOT / "config" / "sources.txt"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 
 # ============ 可配置参数 ============
-TIMEOUT = 4.5                 # TCP 连接超时（秒）
-MAX_NODES = 120               # 最终保留节点数
-MAX_WORKERS = 40              # 并发测试数量
+TIMEOUT = 4.0                 # TCP 连接超时（秒）
+MAX_NODES = 150               # 最终保留节点数（适当提高）
+MAX_WORKERS = 50              # 并发测试数量
 SOURCE_TIMEOUT = 12           # 拉取订阅源超时
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 # ====================================
@@ -68,7 +68,6 @@ def get_endpoint(line: str):
             return protocol, host, port
 
         if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic"):
-            # 统一用 urlsplit 处理
             parsed = urllib.parse.urlsplit(line)
             host = parsed.hostname
             port = parsed.port
@@ -77,20 +76,16 @@ def get_endpoint(line: str):
             return None, None, None
 
         if protocol == "ss":
-            # ss://method:password@host:port 或 ss://base64@host:port 或 ss://base64
             body = line[5:].split("#")[0].split("?")[0]
 
             if "@" in body:
-                # 已经是 method:pass@host:port 形式（可能经过一次解码）
                 userinfo, endpoint = body.rsplit("@", 1)
             else:
-                # 整体是 base64
                 decoded = decode_base64(body)
                 if "@" not in decoded:
                     return None, None, None
                 userinfo, endpoint = decoded.rsplit("@", 1)
 
-            # endpoint 可能是 host:port 或 [ipv6]:port
             if endpoint.startswith("["):
                 # IPv6
                 host_port = endpoint[1:].split("]")
@@ -198,8 +193,8 @@ def main():
     selected = [line for line, _ in alive[:MAX_NODES]]
 
     # 打印前几名延迟
-    print("延迟最低的 5 个节点:")
-    for line, lat in alive[:5]:
+    print("延迟最低的 8 个节点:")
+    for line, lat in alive[:8]:
         proto, host, port = get_endpoint(line)
         print(f"  {lat*1000:.0f}ms  {proto}://{host}:{port}")
 
