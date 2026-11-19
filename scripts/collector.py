@@ -24,6 +24,7 @@ MAX_WORKERS = 30
 NODE_DEADLINE = 5.0
 DNS_TIMEOUT = 2.0
 SOURCE_TIMEOUT = (4, 8)
+SOURCE_DEADLINE = 20.0
 SOURCE_RETRIES = 1
 MAX_SOURCE_BYTES = 2_000_000
 MAX_SOURCE_NODES = 5_000
@@ -424,6 +425,7 @@ def fetch_source(url: str) -> list[str]:
     last_error = None
     for attempt in range(1 + SOURCE_RETRIES):
         try:
+            deadline = time.monotonic() + SOURCE_DEADLINE
             with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
                 # Redirects are disabled above; accept only a successful full response.
                 # raise_for_status() does not reject 3xx when redirects are disabled.
@@ -434,6 +436,8 @@ def fetch_source(url: str) -> list[str]:
                     raise ValueError("source too large")
                 chunks, total = [], 0
                 for chunk in resp.iter_content(chunk_size=16384):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("source deadline exceeded")
                     if not chunk:
                         continue
                     total += len(chunk)
@@ -441,7 +445,7 @@ def fetch_source(url: str) -> list[str]:
                         raise ValueError("source too large")
                     chunks.append(chunk)
                 return decode_subscription(b"".join(chunks).decode("utf-8-sig", errors="replace"))
-        except (requests.RequestException, ValueError, UnicodeError) as e:
+        except (requests.RequestException, ValueError, UnicodeError, TimeoutError) as e:
             last_error = type(e).__name__
             if attempt < SOURCE_RETRIES:
                 time.sleep(1)
