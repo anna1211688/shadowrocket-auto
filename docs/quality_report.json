@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-19T17:10:38.676498+00:00",
+  "generated_at": "2026-11-19T17:26:33.924969+00:00",
   "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
   "ranking": "measured_proxy_download_mbps_descending",
   "speed_test": {
@@ -9,35 +9,35 @@
     "successful": 4,
     "failed_or_unsupported": 21,
     "download_mbps": {
-      "min": 0.68,
-      "average": 8.88,
-      "p50": 10.5,
-      "p95": 13.8
+      "min": 0.44,
+      "average": 3.94,
+      "p50": 2.3,
+      "p95": 9.7
     },
     "top_nodes": [
       {
-        "id": "4c05c153b14f",
-        "protocol": "ss",
-        "download_mbps": 13.9,
-        "tcp_latency_ms": 14.1
-      },
-      {
-        "id": "9545943fb01c",
-        "protocol": "ss",
-        "download_mbps": 13.23,
-        "tcp_latency_ms": 15.1
-      },
-      {
         "id": "728c724db64a",
         "protocol": "ss",
-        "download_mbps": 7.69,
+        "download_mbps": 10.73,
         "tcp_latency_ms": 14.1
       },
       {
-        "id": "551ac9ef188e",
+        "id": "9b50b25d1624",
         "protocol": "ss",
-        "download_mbps": 0.68,
-        "tcp_latency_ms": 15.9
+        "download_mbps": 3.78,
+        "tcp_latency_ms": 11.6
+      },
+      {
+        "id": "43f1fb3ffb44",
+        "protocol": "ss",
+        "download_mbps": 0.79,
+        "tcp_latency_ms": 15.8
+      },
+      {
+        "id": "6308ca6f38d9",
+        "protocol": "ss",
+        "download_mbps": 0.44,
+        "tcp_latency_ms": 15.8
       }
     ],
     "diagnostic_counts": {
@@ -51,17 +51,17 @@
       },
       "by_reason": {
         "proxy_or_tls_connection_error": 3,
-        "payload_size_mismatch": 1,
-        "connection_reset": 17
+        "connection_reset": 17,
+        "payload_size_mismatch": 1
       },
       "by_error_type": {
         "URLError": 20,
         "unknown": 1
       },
       "by_singbox_error": {
-        "no_detail": 16,
+        "no_detail": 17,
+        "tls_error": 2,
         "unknown": 1,
-        "tls_error": 3,
         "authentication_error": 1
       }
     },
@@ -73,13 +73,6 @@
         "reason": "proxy_or_tls_connection_error",
         "error_type": "URLError",
         "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
-        "protocol": "ss",
-        "status": "incomplete_download",
-        "stage": "download_validation",
-        "reason": "payload_size_mismatch",
         "sample": 1
       },
       {
@@ -123,6 +116,13 @@
         "sample": 1
       },
       {
+        "protocol": "ss",
+        "status": "incomplete_download",
+        "stage": "download_validation",
+        "reason": "payload_size_mismatch",
+        "sample": 1
+      },
+      {
         "protocol": "trojan",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
@@ -149,7 +149,7 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
-        "singbox_error": "no_detail",
+        "singbox_error": "tls_error",
         "sample": 1
       },
       {
@@ -228,7 +228,7 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
-        "singbox_error": "tls_error",
+        "singbox_error": "no_detail",
         "sample": 1
       },
       {
@@ -267,26 +267,26 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
-        "singbox_error": "tls_error",
+        "singbox_error": "no_detail",
         "sample": 1
       }
     ]
   },
   "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
   "subscription_status": "updated",
-  "raw_nodes": 10538,
-  "unique_candidates": 8018,
-  "tcp_reachable": 3145,
+  "raw_nodes": 16240,
+  "unique_candidates": 11151,
+  "tcp_reachable": 3158,
   "udp_unverified": 235,
   "rejected": {
-    "ok": 3145,
+    "ok": 3158,
     "slow": 0,
-    "timeout": 1500,
-    "invalid": 228,
-    "private": 140,
-    "duplicate": 2272,
+    "timeout": 1486,
+    "invalid": 293,
+    "private": 147,
+    "duplicate": 4770,
     "udp_unverified": 235,
-    "skipped_limit": 3018,
+    "skipped_limit": 6151,
     "proxy_speed_candidates_considered": 25,
     "proxy_speed_unsupported": 0,
     "proxy_speed_tested": 25,
@@ -295,28 +295,28 @@
     "proxy_speed_failed_or_unsupported": 21
   },
   "protocol_counts": {
-    "ss": 392,
-    "trojan": 478,
-    "vless": 1745,
+    "ss": 385,
+    "trojan": 476,
+    "vless": 1767,
     "vmess": 530
   },
   "region_counts": {
-    "DE": 134,
-    "GB": 69,
+    "DE": 132,
+    "GB": 67,
     "HK": 20,
-    "JP": 39,
-    "KR": 11,
-    "OTHER": 2517,
+    "JP": 38,
+    "KR": 12,
+    "OTHER": 2530,
     "SG": 88,
-    "TW": 3,
+    "TW": 7,
     "US": 264
   },
   "latency_ms": {
     "min": 5.8,
-    "average": 101.3,
-    "p50": 55.6,
-    "p95": 210.6,
-    "jitter_average": 51.0,
-    "jitter_p95": 57.6
+    "average": 102.7,
+    "p50": 49.4,
+    "p95": 203.2,
+    "jitter_average": 48.5,
+    "jitter_p95": 40.9
   }
 }
