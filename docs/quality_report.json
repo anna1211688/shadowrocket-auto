@@ -1,167 +1,81 @@
 {
-  "generated_at": "2026-11-19T17:53:58.717349+00:00",
+  "generated_at": "2026-11-19T18:13:35.721792+00:00",
   "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
-  "ranking": "measured_proxy_download_mbps_descending",
+  "ranking": "cn_tier_then_measured_proxy_download_mbps_descending",
+  "cn_tier_counts": {
+    "A": 1048,
+    "B": 582,
+    "C": 849
+  },
   "speed_test": {
-    "candidates_considered": 86,
-    "tested": 80,
-    "unsupported": 6,
-    "successful": 17,
-    "failed_or_unsupported": 69,
+    "candidates_considered": 80,
+    "tested": 73,
+    "unsupported": 7,
+    "successful": 3,
+    "failed_or_unsupported": 77,
     "download_mbps": {
-      "min": 0.21,
-      "average": 5.07,
-      "p50": 3.0,
-      "p95": 11.7
+      "min": 0.56,
+      "average": 1.65,
+      "p50": 2.0,
+      "p95": 2.4
     },
     "top_nodes": [
       {
-        "id": "febc19526291",
-        "protocol": "ss",
-        "download_mbps": 22.28,
-        "tcp_latency_ms": 9.2
-      },
-      {
-        "id": "a10f41080478",
-        "protocol": "ss",
-        "download_mbps": 9.0,
-        "tcp_latency_ms": 23.6
-      },
-      {
-        "id": "0af0706e48fa",
-        "protocol": "ss",
-        "download_mbps": 7.99,
-        "tcp_latency_ms": 30.8
-      },
-      {
-        "id": "473410a26bd1",
-        "protocol": "ss",
-        "download_mbps": 7.32,
-        "tcp_latency_ms": 30.5
-      },
-      {
-        "id": "ecd3237f515e",
-        "protocol": "ss",
-        "download_mbps": 6.73,
-        "tcp_latency_ms": 37.0
-      },
-      {
-        "id": "93217fa2fccf",
-        "protocol": "ss",
-        "download_mbps": 5.03,
-        "tcp_latency_ms": 39.5
-      },
-      {
-        "id": "08b68201bf9e",
-        "protocol": "ss",
-        "download_mbps": 3.59,
-        "tcp_latency_ms": 23.3
-      },
-      {
-        "id": "827b10db52ed",
+        "id": "cb98703577bc",
         "protocol": "hy2",
-        "download_mbps": 3.23,
+        "download_mbps": 2.39,
         "tcp_latency_ms": null
       },
       {
-        "id": "659b7a134638",
+        "id": "1ca79f511fab",
         "protocol": "hy2",
-        "download_mbps": 2.95,
+        "download_mbps": 1.99,
         "tcp_latency_ms": null
       },
       {
-        "id": "ad6eb6cbb095",
+        "id": "ae66bb7e3055",
         "protocol": "hysteria2",
-        "download_mbps": 2.92,
+        "download_mbps": 0.56,
         "tcp_latency_ms": null
-      },
-      {
-        "id": "87f0171bdf35",
-        "protocol": "hy2",
-        "download_mbps": 2.66,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "d8b10f6a0a61",
-        "protocol": "hy2",
-        "download_mbps": 2.55,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "06838ebdc954",
-        "protocol": "hy2",
-        "download_mbps": 2.52,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "2cf07ed42d73",
-        "protocol": "hy2",
-        "download_mbps": 2.5,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "52b61bea7720",
-        "protocol": "hy2",
-        "download_mbps": 2.45,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "4bd9c4b812e0",
-        "protocol": "hy2",
-        "download_mbps": 2.25,
-        "tcp_latency_ms": null
-      },
-      {
-        "id": "2b2ab54b342e",
-        "protocol": "vless",
-        "download_mbps": 0.21,
-        "tcp_latency_ms": 4.8
       }
     ],
     "diagnostic_counts": {
       "by_status": {
-        "unsupported": 6,
-        "proxy_connect_failed": 59,
-        "incomplete_download": 4
+        "unsupported": 7,
+        "proxy_connect_failed": 70
       },
       "by_stage": {
-        "preflight": 6,
-        "proxy_tunnel_connect": 59,
-        "download_validation": 4
+        "preflight": 7,
+        "proxy_tunnel_connect": 70
       },
       "by_reason": {
-        "transport tcp,udp not yet supported": 1,
-        "Shadowsocks method/password missing": 2,
-        "transport xhttp not yet supported": 2,
-        "hysteria is not yet supported by the speed tester": 1,
-        "proxy_or_tls_connection_error": 10,
-        "connection_reset": 44,
-        "socket_error": 5,
-        "payload_size_mismatch": 4
+        "transport xhttp not yet supported": 7,
+        "proxy_or_tls_connection_error": 9,
+        "connection_reset": 60,
+        "socket_error": 1
       },
       "by_error_type": {
-        "unknown": 10,
-        "URLError": 59
+        "unknown": 7,
+        "URLError": 70
       },
       "by_singbox_error": {
-        "unknown": 10,
-        "no_detail": 38,
-        "tls_error": 19,
-        "authentication_error": 2
+        "unknown": 7,
+        "no_detail": 44,
+        "tls_error": 26
       }
     },
     "failure_diagnostics": [
       {
-        "protocol": "vmess",
+        "protocol": "vless",
         "status": "unsupported",
         "stage": "preflight",
-        "reason": "transport tcp,udp not yet supported"
+        "reason": "transport xhttp not yet supported"
       },
       {
-        "protocol": "ss",
+        "protocol": "vless",
         "status": "unsupported",
         "stage": "preflight",
-        "reason": "Shadowsocks method/password missing"
+        "reason": "transport xhttp not yet supported"
       },
       {
         "protocol": "vless",
@@ -176,16 +90,22 @@
         "reason": "transport xhttp not yet supported"
       },
       {
-        "protocol": "ss",
+        "protocol": "vless",
         "status": "unsupported",
         "stage": "preflight",
-        "reason": "Shadowsocks method/password missing"
+        "reason": "transport xhttp not yet supported"
       },
       {
-        "protocol": "hysteria",
+        "protocol": "vless",
         "status": "unsupported",
         "stage": "preflight",
-        "reason": "hysteria is not yet supported by the speed tester"
+        "reason": "transport xhttp not yet supported"
+      },
+      {
+        "protocol": "vless",
+        "status": "unsupported",
+        "stage": "preflight",
+        "reason": "transport xhttp not yet supported"
       },
       {
         "protocol": "hy2",
@@ -197,7 +117,17 @@
         "sample": 1
       },
       {
-        "protocol": "hysteria2",
+        "protocol": "trojan",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "connection_reset",
+        "error_type": "URLError",
+        "errno": 104,
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "vless",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
         "reason": "proxy_or_tls_connection_error",
@@ -226,66 +156,7 @@
         "sample": 1
       },
       {
-        "protocol": "vmess",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "tls_error",
-        "sample": 1
-      },
-      {
-        "protocol": "hysteria2",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "authentication_error",
-        "sample": 1
-      },
-      {
-        "protocol": "ss",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "proxy_or_tls_connection_error",
-        "error_type": "URLError",
-        "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
-        "protocol": "trojan",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "tls_error",
-        "sample": 1
-      },
-      {
-        "protocol": "vless",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
-        "protocol": "vmess",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
-        "protocol": "hysteria2",
+        "protocol": "hy2",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
         "reason": "proxy_or_tls_connection_error",
@@ -310,11 +181,21 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "trojan",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "connection_reset",
+        "error_type": "URLError",
+        "errno": 104,
         "singbox_error": "tls_error",
         "sample": 1
       },
       {
-        "protocol": "vmess",
+        "protocol": "vless",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
         "reason": "connection_reset",
@@ -324,7 +205,7 @@
         "sample": 1
       },
       {
-        "protocol": "hysteria2",
+        "protocol": "hy2",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
         "reason": "proxy_or_tls_connection_error",
@@ -333,12 +214,59 @@
         "sample": 1
       },
       {
-        "protocol": "ss",
+        "protocol": "trojan",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "proxy_or_tls_connection_error",
+        "error_type": "URLError",
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "vless",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "connection_reset",
+        "error_type": "URLError",
+        "errno": 104,
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "hy2",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "proxy_or_tls_connection_error",
+        "error_type": "URLError",
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "trojan",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
         "reason": "socket_error",
         "error_type": "URLError",
-        "errno": 8,
+        "errno": 1,
+        "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "vless",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "connection_reset",
+        "error_type": "URLError",
+        "errno": 104,
+        "singbox_error": "tls_error",
+        "sample": 1
+      },
+      {
+        "protocol": "hy2",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "proxy_or_tls_connection_error",
+        "error_type": "URLError",
         "singbox_error": "no_detail",
         "sample": 1
       },
@@ -351,74 +279,54 @@
         "errno": 104,
         "singbox_error": "tls_error",
         "sample": 1
-      },
-      {
-        "protocol": "vless",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
-        "protocol": "vmess",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "connection_reset",
-        "error_type": "URLError",
-        "errno": 104,
-        "singbox_error": "no_detail",
-        "sample": 1
       }
     ]
   },
-  "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
+  "note": "Subscription order prioritises mainland-China reachability tiers (VLESS Reality and TLS on port 443 first), then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
   "subscription_status": "updated",
   "raw_nodes": 16240,
-  "unique_candidates": 11151,
-  "tcp_reachable": 2462,
-  "udp_unverified": 104,
+  "unique_candidates": 11150,
+  "tcp_reachable": 2479,
+  "udp_unverified": 106,
   "rejected": {
-    "ok": 2462,
+    "ok": 2479,
     "slow": 0,
-    "timeout": 2180,
+    "timeout": 2181,
     "invalid": 293,
-    "private": 271,
-    "duplicate": 4770,
-    "udp_unverified": 104,
-    "skipped_limit": 6151,
-    "proxy_speed_candidates_considered": 86,
-    "proxy_speed_unsupported": 6,
-    "proxy_speed_tested": 80,
-    "proxy_speed_ok": 17,
-    "udp_speed_verified": 9,
-    "proxy_speed_failed_or_unsupported": 69
+    "private": 257,
+    "duplicate": 4771,
+    "udp_unverified": 106,
+    "skipped_limit": 6150,
+    "proxy_speed_candidates_considered": 80,
+    "proxy_speed_unsupported": 7,
+    "proxy_speed_tested": 73,
+    "proxy_speed_ok": 3,
+    "udp_speed_verified": 3,
+    "proxy_speed_failed_or_unsupported": 77
   },
   "protocol_counts": {
-    "ss": 183,
-    "trojan": 402,
-    "vless": 932,
-    "vmess": 945
+    "ss": 168,
+    "trojan": 419,
+    "vless": 884,
+    "vmess": 1008
   },
   "region_counts": {
-    "DE": 123,
-    "GB": 39,
-    "HK": 29,
-    "JP": 31,
-    "KR": 16,
-    "OTHER": 1918,
-    "SG": 75,
-    "TW": 13,
-    "US": 218
+    "DE": 122,
+    "GB": 43,
+    "HK": 36,
+    "JP": 30,
+    "KR": 18,
+    "OTHER": 1931,
+    "SG": 70,
+    "TW": 9,
+    "US": 220
   },
   "latency_ms": {
-    "min": 4.6,
-    "average": 99.1,
-    "p50": 57.9,
-    "p95": 218.4,
-    "jitter_average": 34.5,
-    "jitter_p95": 36.4
+    "min": 1.3,
+    "average": 81.2,
+    "p50": 60.8,
+    "p95": 219.4,
+    "jitter_average": 52.4,
+    "jitter_p95": 86.3
   }
 }
