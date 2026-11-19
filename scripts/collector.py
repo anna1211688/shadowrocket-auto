@@ -13,17 +13,22 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
-OUTPUT_PLAIN = ROOT / "docs" / "shadowrocket_plain.txt"  # 明文调试用
 QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
 # ============ 可配置参数 ============
 TIMEOUT = 3.0                 # TCP 连接超时（秒）
 MAX_LATENCY = 2.5             # 最大可接受延迟（秒）
 MAX_NODES = 150               # 最终保留节点数
-MAX_WORKERS = 50              # 并发测试数量
-SOURCE_TIMEOUT = 12           # 拉取订阅源超时
-SOURCE_RETRIES = 1            # 源拉取失败后重试次数
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+MAX_WORKERS = 30
+NODE_DEADLINE = 5.0
+SOURCE_TIMEOUT = (4, 8)
+SOURCE_RETRIES = 1
+MAX_SOURCE_BYTES = 2_000_000
+MAX_SOURCE_NODES = 5_000
+MAX_TOTAL_NODES = 20_000
+MAX_LINE_LENGTH = 8_192
+MAX_SOURCES = 100
+USER_AGENT = "shadowrocket-auto/1.0"
 
 # 协议优先级权重（数值越小越优先，同延迟时生效）
 PROTOCOL_WEIGHT = {
@@ -40,15 +45,14 @@ PROTOCOL_WEIGHT = {
 
 
 def decode_base64(value: str) -> str:
+    if not isinstance(value, str) or not value or len(value) > MAX_SOURCE_BYTES * 2:
+        return ""
     value = value.strip()
     value += "=" * (-len(value) % 4)
     try:
-        return base64.urlsafe_b64decode(value).decode("utf-8", errors="ignore")
-    except Exception:
-        try:
-            return base64.b64decode(value).decode("utf-8", errors="ignore")
-        except Exception:
-            return ""
+        return base64.b64decode(value, altchars=b"-_", validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
 
 
 def decode_subscription(content: str) -> list[str]:
@@ -60,7 +64,14 @@ def decode_subscription(content: str) -> list[str]:
     if decoded and ("://" in decoded or "\n" in decoded):
         content = decoded
 
-    return [line.strip() for line in content.splitlines() if line.strip()]
+    nodes = []
+    for line in content.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and len(line) <= MAX_LINE_LENGTH:
+            nodes.append(line)
+            if len(nodes) >= MAX_SOURCE_NODES:
+                break
+    return nodes
 
 
 def get_protocol(line: str) -> str | None:
@@ -73,17 +84,23 @@ def resolve_public_addresses(host: str) -> list[tuple]:
 
     返回 getaddrinfo 地址项，后续连接直接使用解析结果，避免二次 DNS 解析。
     """
+    if not isinstance(host, str) or not host or len(host) > 253 or any(ord(c) < 33 or ord(c) == 127 for c in host) or any(c in host for c in "/\\?#@"):
+        return []
     try:
         literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
         if not literal.is_global:
             return []
-        return socket.getaddrinfo(str(literal), None, type=socket.SOCK_STREAM)
-    except ValueError:
-        pass
+        try:
+            return socket.getaddrinfo(str(literal), None, type=socket.SOCK_STREAM)
+        except OSError:
+            return []
 
     try:
         results = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except (socket.gaierror, UnicodeError, OSError):
+    except (socket.gaierror, UnicodeError, OSError, TypeError):
         return []
 
     if not results:
@@ -93,7 +110,7 @@ def resolve_public_addresses(host: str) -> list[tuple]:
         try:
             if not ipaddress.ip_address(sockaddr[0]).is_global:
                 return []
-        except ValueError:
+        except (ValueError, TypeError, IndexError):
             return []
     return results
 
@@ -103,7 +120,9 @@ def is_public_ip(host: str) -> bool:
     try:
         return ipaddress.ip_address(host).is_global
     except ValueError:
-        return True
+        return isinstance(host, str) and bool(host) and len(host) <= 253
+    except (TypeError, AttributeError):
+        return False
 
 
 REGION_KEYWORDS = {
@@ -194,6 +213,8 @@ def get_dedup_key(line: str):
         if protocol == "vmess":
             raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
             data = json.loads(raw)
+            if not isinstance(data, dict):
+                return None
             for label in ("ps", "remark", "name"):
                 data.pop(label, None)
             identity = json.dumps(data, sort_keys=True, separators=(",", ":"))
@@ -211,8 +232,8 @@ def get_dedup_key(line: str):
             if protocol == "ss" and not parsed.hostname:
                 identity = line.split("#", 1)[0].strip()
         return (protocol, host.lower(), int(port), identity)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return (protocol, host.lower(), int(port), line.split("#", 1)[0].strip())
+    except (TypeError, ValueError, AttributeError, json.JSONDecodeError):
+        return None
 
 
 def get_endpoint(line: str):
@@ -226,15 +247,26 @@ def get_endpoint(line: str):
         if protocol == "vmess":
             raw = decode_base64(line[8:].split("#")[0].split("?")[0])
             data = json.loads(raw)
+            if not isinstance(data, dict):
+                return None, None, None
             host = data.get("add") or data.get("host")
-            port = int(data.get("port", 0))
+            raw_port = data.get("port")
+            if not isinstance(host, str) or not host or len(host) > 253:
+                return None, None, None
+            if isinstance(raw_port, bool) or not str(raw_port).isdigit():
+                return None, None, None
+            port = int(raw_port)
+            if not 1 <= port <= 65535:
+                return None, None, None
+            if not isinstance(host, str) or not host or len(host) > 253 or not 1 <= port <= 65535:
+                return None, None, None
             return protocol, host, port
 
         if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic"):
             parsed = urllib.parse.urlsplit(line)
             host = parsed.hostname
             port = parsed.port
-            if host and port:
+            if isinstance(host, str) and host and len(host) <= 253 and isinstance(port, int) and 1 <= port <= 65535:
                 return protocol, host, port
             return None, None, None
 
@@ -259,7 +291,7 @@ def get_endpoint(line: str):
 
             return protocol, host, port
 
-    except Exception:
+    except (ValueError, TypeError, AttributeError, UnicodeError, json.JSONDecodeError):
         return None, None, None
 
     return None, None, None
@@ -278,18 +310,21 @@ def test_node(line: str):
     if not protocol or not host or not port or not (1 <= port <= 65535):
         return "invalid", line, None, None
 
-    addresses = resolve_public_addresses(host)
-    if not addresses:
-        return "private", line, None, protocol
-
-    start = time.perf_counter()
     try:
+        addresses = resolve_public_addresses(host)
+        if not addresses:
+            return "private", line, None, protocol
+        start = time.perf_counter()
+        deadline = start + NODE_DEADLINE
         connected = False
         for family, socktype, proto, _, sockaddr in addresses:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return "timeout", line, None, protocol
             target = (sockaddr[0], port, *sockaddr[2:]) if family == socket.AF_INET6 else (sockaddr[0], port)
             try:
                 with socket.socket(family, socktype, proto) as sock:
-                    sock.settimeout(TIMEOUT)
+                    sock.settimeout(min(TIMEOUT, remaining))
                     sock.connect(target)
                 connected = True
                 break
@@ -311,18 +346,25 @@ def fetch_source(url: str) -> list[str]:
     last_error = None
     for attempt in range(1 + SOURCE_RETRIES):
         try:
-            resp = requests.get(
-                url,
-                timeout=SOURCE_TIMEOUT,
-                headers={"User-Agent": USER_AGENT},
-            )
-            resp.raise_for_status()
-            return decode_subscription(resp.text)
-        except Exception as e:
-            last_error = e
+            with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=True) as resp:
+                resp.raise_for_status()
+                length = resp.headers.get("Content-Length")
+                if length and int(length) > MAX_SOURCE_BYTES:
+                    raise ValueError("source too large")
+                chunks, total = [], 0
+                for chunk in resp.iter_content(chunk_size=16384):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > MAX_SOURCE_BYTES:
+                        raise ValueError("source too large")
+                    chunks.append(chunk)
+                return decode_subscription(b"".join(chunks).decode("utf-8-sig", errors="replace"))
+        except (requests.RequestException, ValueError, UnicodeError) as e:
+            last_error = type(e).__name__
             if attempt < SOURCE_RETRIES:
                 time.sleep(1)
-    print(f"[源失败] {url} -> {last_error}")
+    print(f"[源失败] request failed or response limit exceeded ({last_error})")
     return []
 
 
@@ -334,6 +376,8 @@ def main():
             line = line.strip()
             if line and not line.startswith("#"):
                 sources.append(line)
+                if len(sources) >= MAX_SOURCES:
+                    break
 
     print(f"共 {len(sources)} 个订阅源")
 
@@ -341,8 +385,9 @@ def main():
     raw_nodes: list[str] = []
     for url in sources:
         nodes = fetch_source(url)
-        print(f"  拉取到 {len(nodes)} 条: {url}")
-        raw_nodes.extend(nodes)
+        raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
+        if len(raw_nodes) >= MAX_TOTAL_NODES:
+            break
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重
     candidates = []
@@ -351,13 +396,18 @@ def main():
     for line in raw_nodes:
         protocol, host, port = get_endpoint(line)
         if not protocol or not host or not port:
+            stats["invalid"] += 1
             continue
         # 域名在 test_node 中做 DNS 公网校验；这里仅排除明确的非公网 IP 字面量。
         if not is_public_ip(host):
             continue
 
         key = get_dedup_key(line)
-        if key is None or key in seen_keys:
+        if key is None:
+            stats["invalid"] += 1
+            continue
+        if key in seen_keys:
+            stats["duplicate"] = stats.get("duplicate", 0) + 1
             continue
         seen_keys.add(key)
         candidates.append(line)
@@ -368,13 +418,17 @@ def main():
     print(f"开始并行 TCP 连通性测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
 
     alive: list[tuple[str, float, str]] = []  # (line, latency, protocol)
-    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0}
+    stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
 
     if candidates:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(test_node, line) for line in candidates]
             for future in as_completed(futures):
-                status, line, latency, protocol = future.result()
+                try:
+                    status, line, latency, protocol = future.result()
+                except Exception:
+                    stats["timeout"] += 1
+                    continue
                 stats[status] = stats.get(status, 0) + 1
                 if status == "ok":
                     alive.append((line, latency, protocol))
@@ -415,12 +469,9 @@ def main():
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     OUTPUT.write_text(content + "\n", encoding="utf-8")
 
-    # 明文版本（方便调试，可不提交到 git 也可提交）
-    OUTPUT_PLAIN.write_text("\n".join(selected) + "\n", encoding="utf-8")
-
     print(f"\n已发布节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
-    print(f"  → {OUTPUT_PLAIN} (明文调试)")
+    print("仅生成 Base64 订阅；不会写出明文节点文件。")
     print(f"  → {QUALITY_REPORT} (聚合质量报告)")
 
 
