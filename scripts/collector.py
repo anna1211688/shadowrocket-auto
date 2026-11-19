@@ -263,8 +263,6 @@ def get_endpoint(line: str):
             port = int(raw_port)
             if not 1 <= port <= 65535:
                 return None, None, None
-            if not isinstance(host, str) or not host or len(host) > 253 or not 1 <= port <= 65535:
-                return None, None, None
             return protocol, host, port
 
         if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic"):
