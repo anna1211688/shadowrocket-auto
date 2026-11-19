@@ -13,6 +13,7 @@ https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadow
 ## 安全说明
 
 - 订阅源响应上限 2 MiB；每源最多 5,000 条、总计最多 20,000 条候选；单行最多 8 KiB。
+- 订阅源仅允许 HTTPS `raw.githubusercontent.com`，禁止自动跟随重定向，避免恶意源配置或跳转访问内网/本机服务。
 - VMess 主机和端口进行严格类型/范围校验；单个异常节点不会中断整批任务。
 - DNS 答案只要包含非公网地址就拒绝；连接时使用已校验的解析结果。
 - 每个节点有连接总时限，防止多地址轮询无限拖延。
