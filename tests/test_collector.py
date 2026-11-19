@@ -274,5 +274,36 @@ class AdversarialInputTests(unittest.TestCase):
             collector.MAX_SOURCE_NODES, collector.MAX_LINE_LENGTH = old_count, old_length
 
 
+class CnTierTests(unittest.TestCase):
+    def test_vless_reality_is_tier_a(self):
+        self.assertEqual(collector.cn_tier("vless://uuid@example.com:443?security=reality&pbk=key"), 0)
+
+    def test_vless_tls_443_is_tier_a_other_tls_is_b(self):
+        self.assertEqual(collector.cn_tier("vless://uuid@example.com:443?security=tls"), 0)
+        self.assertEqual(collector.cn_tier("vless://uuid@example.com:8443?security=tls"), 1)
+
+    def test_vless_without_tls_is_tier_c(self):
+        self.assertEqual(collector.cn_tier("vless://uuid@example.com:80"), 2)
+
+    def test_trojan_tiers_follow_port(self):
+        self.assertEqual(collector.cn_tier("trojan://secret@example.com:443"), 0)
+        self.assertEqual(collector.cn_tier("trojan://secret@example.com:8443"), 1)
+
+    def test_vmess_tls_443_is_tier_b_plain_is_c(self):
+        tls443 = "vmess://" + base64.urlsafe_b64encode(
+            json.dumps({"add": "example.com", "port": "443", "id": "uuid", "tls": "tls"}).encode()
+        ).decode()
+        plain = "vmess://" + base64.urlsafe_b64encode(
+            json.dumps({"add": "example.com", "port": "80", "id": "uuid", "tls": ""}).encode()
+        ).decode()
+        self.assertEqual(collector.cn_tier(tls443), 1)
+        self.assertEqual(collector.cn_tier(plain), 2)
+
+    def test_ss_and_hy2_are_tier_c(self):
+        userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
+        self.assertEqual(collector.cn_tier(f"ss://{userinfo}@example.com:8388"), 2)
+        self.assertEqual(collector.cn_tier("hy2://secret@example.com:443"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

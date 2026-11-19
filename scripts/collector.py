@@ -242,6 +242,40 @@ def infer_region(line: str) -> str:
     return "OTHER"
 
 
+def cn_tier(line: str) -> int:
+    """大陆可用性档位：0=A（优先）/ 1=B / 2=C。
+
+    面向主要在大陆使用的客户端：VLESS Reality 与 443 端口的 TLS 伪装
+    最难被识别和封锁；SS、hy2 等明文特征或 UDP 协议在大陆成功率最低。
+    注意这只是按协议/传输/端口的启发式排序，节点 IP 本身是否已被封锁
+    无法从境外测量得知。
+    """
+    protocol, _, port = get_endpoint(line)
+    if not protocol:
+        return 2
+    if protocol == "vless":
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(line).query))
+        security = str(query.get("security", "")).lower()
+        if security == "reality":
+            return 0
+        if security == "tls":
+            return 0 if port == 443 else 1
+        return 2
+    if protocol == "trojan":
+        return 0 if port == 443 else 1
+    if protocol == "vmess":
+        try:
+            raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
+            data = json.loads(raw)
+            if isinstance(data, dict) and str(data.get("tls", "")).lower() == "tls" \
+                    and str(data.get("port")) == "443":
+                return 1
+        except (ValueError, TypeError):
+            pass
+        return 2
+    return 2
+
+
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          alive: list[tuple],
                          subscription_status: str = "preserved_previous",
@@ -254,11 +288,14 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     jitters = sorted(entry[3] * 1000 for entry in alive if len(entry) > 3 and entry[3] is not None)
     protocol_counts: dict[str, int] = {}
     region_counts: dict[str, int] = {}
+    tier_counts: dict[str, int] = {}
     for entry in alive:
         line, _, protocol = entry[:3]
         protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
         region = infer_region(line)
         region_counts[region] = region_counts.get(region, 0) + 1
+        tier = "ABC"[cn_tier(line)]
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
     def percentile(values: list[float], fraction: float):
         if not values:
@@ -310,7 +347,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
-        "ranking": "measured_proxy_download_mbps_descending",
+        "ranking": "cn_tier_then_measured_proxy_download_mbps_descending",
+        "cn_tier_counts": dict(sorted(tier_counts.items())),
         "speed_test": {
             "candidates_considered": len(speed_results),
             "tested": sum(1 for _, result in speed_results if result.get("status") != "unsupported"),
@@ -341,7 +379,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 if result.get("status") != "ok"
             ][:25],
         },
-        "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
+        "note": "Subscription order prioritises mainland-China reachability tiers (VLESS Reality and TLS on port 443 first), then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
@@ -666,24 +704,30 @@ def main():
         print("没有可进行协议级测速的节点，保留旧订阅。")
         return
 
-    # 5. TCP 延迟只用于缩小候选范围；最终订阅严格按真实代理隧道下载 Mbps 排名。
+    # 5. TCP 延迟只用于缩小候选范围。测速名单按大陆可用性档位优先
+    # （A: Reality / 443 TLS，B: 其他 TLS，C: 其余），档内按协议轮转、
+    # 再按延迟，让 80 个测速名额先花在大陆最可能连通的节点上。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    # Give the speed tester a wider pool; it preflights unsupported formats and
-    # selects a round-robin sample across protocols instead of testing VLESS only.
-    protocol_buckets: dict[str, list[tuple]] = {}
+    tier_buckets: dict[int, list[tuple]] = {}
     for entry in alive:
-        protocol_buckets.setdefault(entry[2], []).append(entry)
-    tcp_shortlist = []
-    protocol_order = sorted(protocol_buckets)
-    while len(tcp_shortlist) < 80 and protocol_order:
-        remaining_protocols = []
-        for protocol in protocol_order:
-            if protocol_buckets[protocol] and len(tcp_shortlist) < 80:
-                tcp_shortlist.append(protocol_buckets[protocol].pop(0)[0])
-            if protocol_buckets[protocol]:
-                remaining_protocols.append(protocol)
-        protocol_order = remaining_protocols
-    udp_shortlist = udp_candidates[:20]
+        tier_buckets.setdefault(cn_tier(entry[0]), []).append(entry)
+    tcp_shortlist: list[str] = []
+    for tier in sorted(tier_buckets):
+        protocol_buckets: dict[str, list[tuple]] = {}
+        for entry in tier_buckets[tier]:
+            protocol_buckets.setdefault(entry[2], []).append(entry)
+        protocol_order = sorted(protocol_buckets)
+        while len(tcp_shortlist) < 72 and protocol_order:
+            remaining_protocols = []
+            for protocol in protocol_order:
+                if protocol_buckets[protocol] and len(tcp_shortlist) < 72:
+                    tcp_shortlist.append(protocol_buckets[protocol].pop(0)[0])
+                if protocol_buckets[protocol]:
+                    remaining_protocols.append(protocol)
+            protocol_order = remaining_protocols
+        if len(tcp_shortlist) >= 72:
+            break
+    udp_shortlist = udp_candidates[:8]
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil
@@ -718,13 +762,16 @@ def main():
         print("没有节点通过实际代理下载测试，保留上一版订阅。")
         return
 
+    # 订阅排序：先大陆可用性档位，再按实测 Mbps，让客户端列表顶部
+    # 优先出现大陆最可能连通的节点。
+    successful_speed_nodes.sort(key=lambda item: (cn_tier(item[0]), -item[1]["download_mbps"]))
     selected = [uri for uri, _ in successful_speed_nodes[:MAX_NODES]]
-    print("实测下载速度排名（Mbps）:")
+    print("订阅排序（档位 / Mbps）:")
     for rank, (uri, result) in enumerate(successful_speed_nodes[:10], 1):
         protocol, host, port = get_endpoint(uri)
-        print(f"  #{rank} {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
+        print(f"  #{rank} {'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
-    # 6. 只发布已完成代理隧道下载测试的节点；订阅按实测 Mbps 降序。
+    # 6. 只发布已完成代理隧道下载测试的节点；订阅按档位、再按 Mbps 排序。
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
     write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results)
@@ -732,7 +779,7 @@ def main():
 
     print(f"\n已生成真实测速节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
-    print("订阅仅包含已通过实际代理下载测试的节点，按 Mbps 从高到低排序；不会提交节点 URI。")
+    print("订阅仅包含已通过实际代理下载测试的节点，按大陆可用性档位、再按 Mbps 排序；不会提交节点 URI。")
     print(f"  → {QUALITY_REPORT} (仅含哈希节点 ID 与聚合测速数据)")
 
 
