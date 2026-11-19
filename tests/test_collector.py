@@ -138,6 +138,20 @@ class SourceUrlSecurityTests(unittest.TestCase):
         ):
             self.assertFalse(collector.is_allowed_source_url(url), url)
 
+    @patch("scripts.collector.SOURCE_RETRIES", 0)
+    @patch("scripts.collector.requests.get")
+    def test_rejects_redirect_response_without_following_it(self, mocked_get):
+        response = mocked_get.return_value.__enter__.return_value
+        response.status_code = 302
+        response.headers = {}
+        response.iter_content.return_value = []
+        self.assertEqual(
+            collector.fetch_source("https://raw.githubusercontent.com/owner/repo/main/list.txt"),
+            [],
+        )
+        mocked_get.assert_called_once()
+        self.assertFalse(mocked_get.call_args.kwargs.get("allow_redirects", True))
+
     @patch("scripts.collector.requests.get")
     def test_rejects_untrusted_source_before_network_request(self, mocked_get):
         self.assertEqual(collector.fetch_source("http://127.0.0.1/secret"), [])

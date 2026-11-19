@@ -389,7 +389,10 @@ def fetch_source(url: str) -> list[str]:
     for attempt in range(1 + SOURCE_RETRIES):
         try:
             with requests.get(url, timeout=SOURCE_TIMEOUT, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
-                resp.raise_for_status()
+                # Redirects are disabled above; accept only a successful full response.
+                # raise_for_status() does not reject 3xx when redirects are disabled.
+                if resp.status_code != 200:
+                    raise ValueError(f"unexpected HTTP status: {resp.status_code}")
                 length = resp.headers.get("Content-Length")
                 if length and int(length) > MAX_SOURCE_BYTES:
                     raise ValueError("source too large")
