@@ -663,7 +663,19 @@ def main():
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
     # Give the speed tester a wider pool; it preflights unsupported formats and
     # selects a round-robin sample across protocols instead of testing VLESS only.
-    tcp_shortlist = [entry[0] for entry in alive[:80]]
+    protocol_buckets: dict[str, list[tuple]] = {}
+    for entry in alive:
+        protocol_buckets.setdefault(entry[2], []).append(entry)
+    tcp_shortlist = []
+    protocol_order = sorted(protocol_buckets)
+    while len(tcp_shortlist) < 80 and protocol_order:
+        remaining_protocols = []
+        for protocol in protocol_order:
+            if protocol_buckets[protocol] and len(tcp_shortlist) < 80:
+                tcp_shortlist.append(protocol_buckets[protocol].pop(0)[0])
+            if protocol_buckets[protocol]:
+                remaining_protocols.append(protocol)
+        protocol_order = remaining_protocols
     udp_shortlist = udp_candidates[:20]
     speed_shortlist = tcp_shortlist + udp_shortlist
 
