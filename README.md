@@ -13,11 +13,11 @@ https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadow
 ## 功能特点
 
 - 多源自动拉取公共节点（带重试）
-- 并行 TCP 连通性测试 + 延迟测量
+- 并行 TCP 连通性测试 + 延迟测量（不等同于代理隧道可用）
 - **严格过滤**：超时节点、高延迟节点、私有 IP
 - 按延迟优先 + 协议权重排序（VLESS / Trojan 优先）
-- 按「协议 + 主机 + 端口」精准去重
-- 每小时自动更新（GitHub Actions）
+- 按「协议 + 主机 + 端口 + 凭据/传输参数」去重，忽略节点备注
+- 域名 DNS 解析后校验所有地址，拒绝混合公网/内网解析结果\n- 自动按节点名称/主机名推测地区（无法识别时归入 OTHER）\n- 每小时自动更新（GitHub Actions）
 
 ## 过滤策略
 
@@ -25,7 +25,7 @@ https://raw.githubusercontent.com/anna1211688/shadowrocket-auto/main/docs/shadow
 |------|------|
 | TCP 连接超过 3 秒 | 丢弃（超时） |
 | 连通但延迟 > 2.5 秒 | 丢弃 |
-| 私有/回环/保留 IP | 丢弃 |
+| 私有/回环/保留 IP（含域名 DNS 解析结果） | 丢弃 |\n| DNS 同时返回公网与内网地址 | 整个节点丢弃 |
 | 最终保留 | 延迟最低的前 150 个节点 |
 
 ## 本地运行
@@ -37,7 +37,7 @@ python scripts/collector.py
 
 运行后会生成：
 - `docs/shadowrocket.txt` —— base64 订阅（给客户端用）
-- `docs/shadowrocket_plain.txt` —— 明文节点列表（调试用）
+- `docs/shadowrocket_plain.txt` —— 明文节点列表（调试用）\n- `docs/quality_report.json` —— 聚合质量报告（协议/地区数量、TCP 连通数、延迟分位数；不包含节点地址或凭据）
 
 ## 配置说明
 
@@ -54,6 +54,6 @@ python scripts/collector.py
 | `MAX_WORKERS` | 50 | 并发测试数 |
 | `SOURCE_RETRIES` | 1 | 源拉取失败重试次数 |
 
-## License
+地区识别基于节点备注和主机名中的关键词，仅作提示，不是 IP 地理定位。质量报告明确标记检测类型为 `tcp_connect_only`：端口可连接不代表代理认证、TLS 握手或实际隧道可用。\n\n## License
 
 MIT
