@@ -247,10 +247,12 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     import datetime
     import statistics
 
-    latencies = sorted(latency * 1000 for _, latency, _ in alive)
+    latencies = sorted(entry[1] * 1000 for entry in alive)
+    jitters = sorted(entry[3] * 1000 for entry in alive if len(entry) > 3 and entry[3] is not None)
     protocol_counts: dict[str, int] = {}
     region_counts: dict[str, int] = {}
-    for line, _, protocol in alive:
+    for entry in alive:
+        line, _, protocol = entry[:3]
         protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
         region = infer_region(line)
         region_counts[region] = region_counts.get(region, 0) + 1
@@ -265,12 +267,13 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
 
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "measurement": "tcp_connect_only",
-        "note": "TCP reachability is not proof that proxy authentication or tunneling works.",
+        "measurement": "tcp_connect_median_3_samples",
+        "note": "Ranks TCP connection latency and stability only; not proxy handshake validation or download throughput. UDP proxy protocols are reported as unverified.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
         "tcp_reachable": len(alive),
+        "udp_unverified": stats.get("udp_unverified", 0),
         "rejected": stats,
         "protocol_counts": dict(sorted(protocol_counts.items())),
         "region_counts": dict(sorted(region_counts.items())),
@@ -279,6 +282,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "average": round(statistics.mean(latencies), 1) if latencies else None,
             "p50": percentile(latencies, 0.50),
             "p95": percentile(latencies, 0.95),
+            "jitter_average": round(statistics.mean(jitters), 1) if jitters else None,
+            "jitter_p95": percentile(jitters, 0.95),
         },
     }
     atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
