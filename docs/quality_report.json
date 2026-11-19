@@ -1,80 +1,71 @@
 {
-  "generated_at": "2026-11-19T16:56:38.652575+00:00",
+  "generated_at": "2026-11-19T17:10:38.676498+00:00",
   "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
   "ranking": "measured_proxy_download_mbps_descending",
   "speed_test": {
-    "candidates_considered": 26,
+    "candidates_considered": 25,
     "tested": 25,
-    "unsupported": 1,
+    "unsupported": 0,
     "successful": 4,
-    "failed_or_unsupported": 22,
+    "failed_or_unsupported": 21,
     "download_mbps": {
-      "min": 0.62,
-      "average": 3.42,
-      "p50": 1.1,
-      "p95": 9.4
+      "min": 0.68,
+      "average": 8.88,
+      "p50": 10.5,
+      "p95": 13.8
     },
     "top_nodes": [
       {
         "id": "4c05c153b14f",
         "protocol": "ss",
-        "download_mbps": 10.86,
-        "tcp_latency_ms": 14.3
+        "download_mbps": 13.9,
+        "tcp_latency_ms": 14.1
       },
       {
-        "id": "6308ca6f38d9",
+        "id": "9545943fb01c",
         "protocol": "ss",
-        "download_mbps": 1.18,
-        "tcp_latency_ms": 16.0
+        "download_mbps": 13.23,
+        "tcp_latency_ms": 15.1
       },
       {
-        "id": "61fe34635efa",
+        "id": "728c724db64a",
         "protocol": "ss",
-        "download_mbps": 1.03,
-        "tcp_latency_ms": 16.0
+        "download_mbps": 7.69,
+        "tcp_latency_ms": 14.1
       },
       {
-        "id": "b6a9df54b501",
-        "protocol": "vmess",
-        "download_mbps": 0.62,
-        "tcp_latency_ms": 6.0
+        "id": "551ac9ef188e",
+        "protocol": "ss",
+        "download_mbps": 0.68,
+        "tcp_latency_ms": 15.9
       }
     ],
     "diagnostic_counts": {
       "by_status": {
-        "unsupported": 1,
         "proxy_connect_failed": 20,
         "incomplete_download": 1
       },
       "by_stage": {
-        "preflight": 1,
         "proxy_tunnel_connect": 20,
         "download_validation": 1
       },
       "by_reason": {
-        "transport xhttp not yet supported": 1,
-        "proxy_or_tls_connection_error": 4,
+        "proxy_or_tls_connection_error": 3,
         "payload_size_mismatch": 1,
-        "connection_reset": 16
+        "connection_reset": 17
       },
       "by_error_type": {
-        "unknown": 2,
-        "URLError": 20
+        "URLError": 20,
+        "unknown": 1
       },
       "by_singbox_error": {
-        "unknown": 2,
-        "no_detail": 15,
-        "tls_error": 4,
+        "no_detail": 16,
+        "unknown": 1,
+        "tls_error": 3,
         "authentication_error": 1
       }
     },
     "failure_diagnostics": [
-      {
-        "protocol": "vless",
-        "status": "unsupported",
-        "stage": "preflight",
-        "reason": "transport xhttp not yet supported"
-      },
       {
         "protocol": "hysteria2",
         "status": "proxy_connect_failed",
@@ -171,15 +162,6 @@
         "sample": 1
       },
       {
-        "protocol": "ss",
-        "status": "proxy_connect_failed",
-        "stage": "proxy_tunnel_connect",
-        "reason": "proxy_or_tls_connection_error",
-        "error_type": "URLError",
-        "singbox_error": "no_detail",
-        "sample": 1
-      },
-      {
         "protocol": "trojan",
         "status": "proxy_connect_failed",
         "stage": "proxy_tunnel_connect",
@@ -196,7 +178,7 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
-        "singbox_error": "tls_error",
+        "singbox_error": "no_detail",
         "sample": 1
       },
       {
@@ -206,7 +188,7 @@
         "reason": "connection_reset",
         "error_type": "URLError",
         "errno": 104,
-        "singbox_error": "tls_error",
+        "singbox_error": "no_detail",
         "sample": 1
       },
       {
@@ -237,6 +219,16 @@
         "error_type": "URLError",
         "errno": 104,
         "singbox_error": "no_detail",
+        "sample": 1
+      },
+      {
+        "protocol": "vmess",
+        "status": "proxy_connect_failed",
+        "stage": "proxy_tunnel_connect",
+        "reason": "connection_reset",
+        "error_type": "URLError",
+        "errno": 104,
+        "singbox_error": "tls_error",
         "sample": 1
       },
       {
@@ -282,49 +274,49 @@
   },
   "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
   "subscription_status": "updated",
-  "raw_nodes": 5445,
-  "unique_candidates": 4473,
-  "tcp_reachable": 2773,
-  "udp_unverified": 217,
+  "raw_nodes": 10538,
+  "unique_candidates": 8018,
+  "tcp_reachable": 3145,
+  "udp_unverified": 235,
   "rejected": {
-    "ok": 2773,
+    "ok": 3145,
     "slow": 0,
-    "timeout": 1361,
-    "invalid": 127,
-    "private": 142,
-    "duplicate": 825,
-    "udp_unverified": 217,
-    "skipped_limit": 0,
-    "proxy_speed_candidates_considered": 26,
-    "proxy_speed_unsupported": 1,
+    "timeout": 1500,
+    "invalid": 228,
+    "private": 140,
+    "duplicate": 2272,
+    "udp_unverified": 235,
+    "skipped_limit": 3018,
+    "proxy_speed_candidates_considered": 25,
+    "proxy_speed_unsupported": 0,
     "proxy_speed_tested": 25,
     "proxy_speed_ok": 4,
     "udp_speed_verified": 0,
-    "proxy_speed_failed_or_unsupported": 22
+    "proxy_speed_failed_or_unsupported": 21
   },
   "protocol_counts": {
-    "ss": 306,
-    "trojan": 357,
-    "vless": 1658,
-    "vmess": 452
+    "ss": 392,
+    "trojan": 478,
+    "vless": 1745,
+    "vmess": 530
   },
   "region_counts": {
-    "DE": 108,
-    "GB": 65,
-    "HK": 22,
-    "JP": 24,
-    "KR": 12,
-    "OTHER": 2297,
-    "SG": 45,
-    "TW": 7,
-    "US": 193
+    "DE": 134,
+    "GB": 69,
+    "HK": 20,
+    "JP": 39,
+    "KR": 11,
+    "OTHER": 2517,
+    "SG": 88,
+    "TW": 3,
+    "US": 264
   },
   "latency_ms": {
     "min": 5.8,
-    "average": 100.4,
-    "p50": 48.4,
-    "p95": 201.7,
-    "jitter_average": 53.5,
-    "jitter_p95": 53.3
+    "average": 101.3,
+    "p50": 55.6,
+    "p95": 210.6,
+    "jitter_average": 51.0,
+    "jitter_p95": 57.6
   }
 }
