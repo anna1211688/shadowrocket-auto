@@ -17,7 +17,8 @@ from pathlib import Path
 
 from scripts import collector
 
-SPEED_TEST_LIMIT = 15
+SPEED_TEST_LIMIT = 25
+SPEED_TEST_TOTAL_SECONDS = 360
 SPEED_TEST_BYTES = 262144
 SPEED_TEST_SAMPLES = 2
 SPEED_TEST_TIMEOUT = 12
@@ -252,6 +253,15 @@ def measure_node(uri, binary):
     except UnsupportedNode as exc:
         return {"status": "unsupported", "reason": str(exc)}
 
+    # Re-resolve and validate immediately before launching sing-box. Pin the
+    # outbound to the validated public IP to prevent DNS-rebinding/SSRF races;
+    # TLS SNI and transport Host remain the original URI values.
+    _, original_host, _ = collector.get_endpoint(uri)
+    addresses = collector.resolve_public_addresses(original_host)
+    if not addresses:
+        return {"status": "dns_rejected", "reason": "no validated public address"}
+    outbound["server"] = addresses[0][4][0]
+
     port = _free_port()
     config = {
         "log": {"disabled": True},
@@ -327,7 +337,11 @@ def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT):
     """Speed-test a bounded shortlist; return URI/result pairs in measured Mbps order."""
     results = []
     shortlist = nodes[:limit]
+    deadline = time.monotonic() + SPEED_TEST_TOTAL_SECONDS
     for uri in shortlist:
+        if time.monotonic() >= deadline:
+            results.append((uri, {"status": "skipped_budget", "reason": "round time budget exhausted"}))
+            continue
         result = measure_node(uri, binary)
         results.append((uri, result))
         if result.get("status") == "ok":
