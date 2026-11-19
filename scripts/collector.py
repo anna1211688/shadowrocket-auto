@@ -30,6 +30,8 @@ MAX_SOURCE_NODES = 5_000
 MAX_TOTAL_NODES = 20_000
 MAX_LINE_LENGTH = 8_192
 MAX_SOURCES = 100
+MAX_SOURCE_WORKERS = 10
+MAX_TEST_CANDIDATES = 1_500
 USER_AGENT = "shadowrocket-auto/1.0"
 
 class DNSResolutionTimeout(Exception):
@@ -85,6 +87,29 @@ def get_protocol(line: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
+def normalize_dns_name(host: str) -> str | None:
+    """Return a strict ASCII DNS name; reject malformed labels and option-like input."""
+    if not isinstance(host, str) or not host or host.startswith("-"):
+        return None
+    name = host[:-1] if host.endswith(".") else host
+    if not name or name.endswith("."):
+        return None
+    try:
+        ascii_name = name.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    if len(ascii_name) > 253:
+        return None
+    labels = ascii_name.split(".")
+    if any(
+        not label or len(label) > 63
+        or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is None
+        for label in labels
+    ):
+        return None
+    return ascii_name
+
+
 def resolve_public_addresses(host: str) -> list[tuple]:
     """解析主机并拒绝非公网结果；域名解析由可超时终止的 getent 子进程执行。"""
     if not isinstance(host, str) or not host or len(host) > 253 or any(ord(c) < 33 or ord(c) == 127 for c in host) or any(c in host for c in "/\\\\?#@"):
@@ -101,10 +126,14 @@ def resolve_public_addresses(host: str) -> list[tuple]:
         except OSError:
             return []
 
+    dns_name = normalize_dns_name(host)
+    if not dns_name:
+        return []
+
     try:
         # subprocess.run 会在 DNS_TIMEOUT 到期后终止并回收解析进程，避免永久卡住采集线程。
         completed = subprocess.run(
-            ["getent", "ahosts", host],
+            ["getent", "ahosts", dns_name],
             check=False, capture_output=True, text=True, timeout=DNS_TIMEOUT,
         )
         if completed.returncode != 0:
@@ -130,6 +159,13 @@ def resolve_public_addresses(host: str) -> list[tuple]:
         raise DNSResolutionTimeout(host) from exc
     except (OSError, UnicodeError, ValueError, TypeError):
         return []
+
+def limit_candidates(candidates: list[str], stats: dict) -> list[str]:
+    """Bound worst-case network work so scheduled runs finish within the job deadline."""
+    skipped = max(0, len(candidates) - MAX_TEST_CANDIDATES)
+    stats["skipped_limit"] = skipped
+    return candidates[:MAX_TEST_CANDIDATES]
+
 
 def is_public_ip(host: str) -> bool:
     """快速过滤明确的非公网 IP；域名在实际连接前只解析并验证一次。"""
@@ -428,11 +464,11 @@ def main():
 
     # 2. 拉取所有节点（带重试）
     raw_nodes: list[str] = []
-    for url in sources:
-        nodes = fetch_source(url)
-        raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
-        if len(raw_nodes) >= MAX_TOTAL_NODES:
-            break
+    with ThreadPoolExecutor(max_workers=MAX_SOURCE_WORKERS) as source_executor:
+        for nodes in source_executor.map(fetch_source, sources):
+            raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
+            if len(raw_nodes) >= MAX_TOTAL_NODES:
+                break
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0}
@@ -459,7 +495,12 @@ def main():
         seen_keys.add(key)
         candidates.append(line)
 
-    print(f"去重后候选节点: {len(candidates)}")
+    unique_candidate_count = len(candidates)
+    candidates = limit_candidates(candidates, stats)
+    print(
+        f"去重后候选节点: {unique_candidate_count}；"
+        f"本轮最多检测 {len(candidates)} 个（超出上限跳过 {stats['skipped_limit']} 个）"
+    )
 
     # 4. 并行测试 + 分类统计
     print(f"开始并行 TCP 连通性测试（并发 {MAX_WORKERS}，超时 {TIMEOUT}s，最大延迟 {MAX_LATENCY}s）...")
@@ -479,7 +520,7 @@ def main():
                     alive.append((line, latency, protocol))
 
     subscription_status = "updated" if alive else "preserved_previous"
-    write_quality_report(len(raw_nodes), len(candidates), stats, alive, subscription_status)
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, subscription_status)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     if not candidates:
