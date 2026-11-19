@@ -3,6 +3,7 @@ import ipaddress
 import json
 import re
 import socket
+import subprocess
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +22,7 @@ MAX_LATENCY = 2.5             # 最大可接受延迟（秒）
 MAX_NODES = 150               # 最终保留节点数
 MAX_WORKERS = 30
 NODE_DEADLINE = 5.0
+DNS_TIMEOUT = 2.0
 SOURCE_TIMEOUT = (4, 8)
 SOURCE_RETRIES = 1
 MAX_SOURCE_BYTES = 2_000_000
@@ -80,11 +82,8 @@ def get_protocol(line: str) -> str | None:
 
 
 def resolve_public_addresses(host: str) -> list[tuple]:
-    """解析主机并拒绝任何包含非公网地址的 DNS 结果。
-
-    返回 getaddrinfo 地址项，后续连接直接使用解析结果，避免二次 DNS 解析。
-    """
-    if not isinstance(host, str) or not host or len(host) > 253 or any(ord(c) < 33 or ord(c) == 127 for c in host) or any(c in host for c in "/\\?#@"):
+    """解析主机并拒绝非公网结果；域名解析由可超时终止的 getent 子进程执行。"""
+    if not isinstance(host, str) or not host or len(host) > 253 or any(ord(c) < 33 or ord(c) == 127 for c in host) or any(c in host for c in "/\\\\?#@"):
         return []
     try:
         literal = ipaddress.ip_address(host)
@@ -94,26 +93,37 @@ def resolve_public_addresses(host: str) -> list[tuple]:
         if not literal.is_global:
             return []
         try:
-            return socket.getaddrinfo(str(literal), None, type=socket.SOCK_STREAM)
+            return socket.getaddrinfo(str(literal), None, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST)
         except OSError:
             return []
 
     try:
-        results = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except (socket.gaierror, UnicodeError, OSError, TypeError):
-        return []
-
-    if not results:
-        return []
-    # 混合公网/内网解析也整体拒绝，避免客户端或系统选择到内网地址。
-    for family, _, _, _, sockaddr in results:
-        try:
-            if not ipaddress.ip_address(sockaddr[0]).is_global:
-                return []
-        except (ValueError, TypeError, IndexError):
+        # subprocess.run 会在 DNS_TIMEOUT 到期后终止并回收解析进程，避免永久卡住采集线程。
+        completed = subprocess.run(
+            ["getent", "ahosts", host],
+            check=False, capture_output=True, text=True, timeout=DNS_TIMEOUT,
+        )
+        if completed.returncode != 0:
             return []
-    return results
-
+        resolved = set()
+        for line in completed.stdout.splitlines():
+            fields = line.split()
+            if fields:
+                try:
+                    address = ipaddress.ip_address(fields[0])
+                except ValueError:
+                    continue
+                if not address.is_global:
+                    return []
+                resolved.add(str(address))
+        if not resolved:
+            return []
+        results = []
+        for address in sorted(resolved):
+            results.extend(socket.getaddrinfo(address, None, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST))
+        return results
+    except (subprocess.TimeoutExpired, OSError, UnicodeError, ValueError, TypeError):
+        return []
 
 def is_public_ip(host: str) -> bool:
     """快速过滤明确的非公网 IP；域名在实际连接前只解析并验证一次。"""
