@@ -280,13 +280,17 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     diagnostic_counts = {
         "by_status": {},
         "by_stage": {},
+        "by_reason": {},
         "by_error_type": {},
+        "by_singbox_error": {},
     }
     for result in failure_diagnostics:
         for key, field in (
             ("by_status", "status"),
             ("by_stage", "stage"),
+            ("by_reason", "reason"),
             ("by_error_type", "error_type"),
+            ("by_singbox_error", "singbox_error"),
         ):
             value = str(result.get(field) or "unknown")
             diagnostic_counts[key][value] = diagnostic_counts[key].get(value, 0) + 1
@@ -327,6 +331,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                     **({"error_type": result["error_type"]} if result.get("error_type") else {}),
                     **({"http_status": result["http_status"]} if result.get("http_status") else {}),
                     **({"errno": result["errno"]} if result.get("errno") else {}),
+                    **({"singbox_error": result["singbox_error"]} if result.get("singbox_error") else {}),
+                    **({"sample": result["sample"]} if result.get("sample") else {}),
                 }
                 for uri, result in speed_results
                 if result.get("status") != "ok"
@@ -655,8 +661,10 @@ def main():
 
     # 5. TCP 延迟只用于缩小候选范围；最终订阅严格按真实代理隧道下载 Mbps 排名。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    tcp_shortlist = [entry[0] for entry in alive[:20]]
-    udp_shortlist = udp_candidates[:5]
+    # Give the speed tester a wider pool; it preflights unsupported formats and
+    # selects a round-robin sample across protocols instead of testing VLESS only.
+    tcp_shortlist = [entry[0] for entry in alive[:80]]
+    udp_shortlist = udp_candidates[:20]
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil
