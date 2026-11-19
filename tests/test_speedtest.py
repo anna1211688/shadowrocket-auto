@@ -1,6 +1,7 @@
 import base64
 import json
 import unittest
+import urllib.error
 
 from scripts import speedtest
 
@@ -51,6 +52,24 @@ class SingBoxOutboundTests(unittest.TestCase):
     def test_unknown_transport_is_skipped_not_guessed(self):
         with self.assertRaises(speedtest.UnsupportedNode):
             speedtest.build_outbound("vless://uuid@example.com:443?type=kcp")
+
+    def test_singbox_error_diagnostics_are_classified_without_raw_output(self):
+        self.assertEqual(
+            speedtest._singbox_error_kind("tls: failed to verify certificate"),
+            "tls_error",
+        )
+        self.assertEqual(
+            speedtest._singbox_error_kind("unknown field \\"server_name\\""),
+            "unknown_field",
+        )
+
+    def test_exception_diagnostics_keep_http_status_without_url(self):
+        error = urllib.error.HTTPError(
+            "https://user:secret@example.com/private", 403, "Forbidden", {}, None
+        )
+        diagnostic = speedtest._exception_diagnostic(error)
+        self.assertEqual(diagnostic, {"error_type": "HTTPError", "http_status": 403})
+        self.assertNotIn("secret", str(diagnostic))
 
 
 if __name__ == "__main__":
