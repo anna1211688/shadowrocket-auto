@@ -241,8 +241,9 @@ def infer_region(line: str) -> str:
 
 
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
-                         alive: list[tuple[str, float, str]],
-                         subscription_status: str = "preserved_previous") -> None:
+                         alive: list[tuple],
+                         subscription_status: str = "preserved_previous",
+                         speed_results: list[tuple] | None = None) -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -265,10 +266,41 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
         upper = min(lower + 1, len(values) - 1)
         return round(values[lower] + (values[upper] - values[lower]) * (position - lower), 1)
 
+    speed_results = speed_results or []
+    successful_speeds = [
+        (uri, result) for uri, result in speed_results
+        if result.get("status") == "ok" and isinstance(result.get("download_mbps"), (int, float))
+    ]
+    successful_speeds.sort(key=lambda item: item[1]["download_mbps"], reverse=True)
+    speed_values = [float(result["download_mbps"]) for _, result in successful_speeds]
+    speed_nodes = []
+    for uri, result in successful_speeds[:20]:
+        protocol, _, _ = get_endpoint(uri)
+        latency = next((entry[1] for entry in alive if entry[0] == uri), None)
+        speed_nodes.append({
+            "id": hashlib.sha256(uri.encode("utf-8")).hexdigest()[:12],
+            "protocol": protocol,
+            "download_mbps": round(float(result["download_mbps"]), 2),
+            "tcp_latency_ms": round(latency * 1000, 1) if latency is not None else None,
+        })
+
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "measurement": "tcp_connect_median_3_samples",
-        "note": "Ranks TCP connection latency and stability only; not proxy handshake validation or download throughput. UDP proxy protocols are reported as unverified.",
+        "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
+        "ranking": "measured_proxy_download_mbps_descending",
+        "speed_test": {
+            "tested": len(speed_results),
+            "successful": len(successful_speeds),
+            "failed_or_unsupported": len(speed_results) - len(successful_speeds),
+            "download_mbps": {
+                "min": round(min(speed_values), 2) if speed_values else None,
+                "average": round(statistics.mean(speed_values), 2) if speed_values else None,
+                "p50": percentile(sorted(speed_values), 0.50),
+                "p95": percentile(sorted(speed_values), 0.95),
+            },
+            "top_nodes": speed_nodes,
+        },
+        "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
@@ -549,6 +581,7 @@ def main():
     print(f"开始并行 TCP 多次采样（每节点 {TCP_SAMPLES} 次，至少成功 {MIN_SUCCESSFUL_SAMPLES} 次；UDP 协议单独标记未验证）...")
 
     alive: list[tuple] = []  # (line, median_latency, protocol, jitter)
+    udp_candidates: list[str] = []
     if candidates:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(test_node, line) for line in candidates]
@@ -561,6 +594,8 @@ def main():
                 stats[status] = stats.get(status, 0) + 1
                 if status == "ok":
                     alive.append((line, latency, protocol, jitter))
+                elif status == "udp_unverified":
+                    udp_candidates.append(line)
 
     if not candidates:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
@@ -578,31 +613,52 @@ def main():
     print(f"  ❌ 解析失败       : {stats['invalid']}")
     print("-" * 46)
 
-    if not alive:
+    if not alive and not udp_candidates:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
         print(f"质量报告已更新: {QUALITY_REPORT}")
-        print("没有检测到可建立 TCP 连接的节点，保留旧订阅。")
+        print("没有可进行协议级测速的节点，保留旧订阅。")
         return
 
-    # 5. 排序：先按 TCP 建连中位延迟，再按抖动和协议权重；不代表真实代理吞吐速度。
+    # 5. TCP 延迟只用于缩小候选范围；最终订阅严格按真实代理隧道下载 Mbps 排名。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    selected = [entry[0] for entry in alive[:MAX_NODES]]
+    tcp_shortlist = [entry[0] for entry in alive[:12]]
+    udp_shortlist = udp_candidates[:3]
+    speed_shortlist = tcp_shortlist + udp_shortlist
 
-    print("延迟最低的 8 个节点:")
-    for line, lat, proto, jitter in alive[:8]:
-        _, host, port = get_endpoint(line)
-        print(f"  {lat*1000:.0f}ms  抖动 {jitter*1000:.0f}ms  {proto}://{host}:{port}")
+    import shutil
+    from scripts.speedtest import rank_by_speed
+    binary = os.environ.get("SING_BOX_PATH") or shutil.which("sing-box")
+    if not binary:
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        raise RuntimeError("sing-box binary unavailable; refusing to publish a latency-only ranking")
 
-    # 6. Write the local subscription atomically before reporting it as updated.
+    print(f"开始真实代理隧道下载测速：TCP {len(tcp_shortlist)} 个，UDP {len(udp_shortlist)} 个")
+    successful_speed_nodes, speed_results = rank_by_speed(speed_shortlist, binary)
+    stats["proxy_speed_tested"] = len(speed_results)
+    stats["proxy_speed_ok"] = len(successful_speed_nodes)
+    stats["proxy_speed_failed_or_unsupported"] = len(speed_results) - len(successful_speed_nodes)
+
+    if not successful_speed_nodes:
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous", speed_results)
+        print("没有节点通过实际代理下载测试，保留上一版订阅。")
+        return
+
+    selected = [uri for uri, _ in successful_speed_nodes[:MAX_NODES]]
+    print("实测下载速度排名（Mbps）:")
+    for rank, (uri, result) in enumerate(successful_speed_nodes[:10], 1):
+        protocol, host, port = get_endpoint(uri)
+        print(f"  #{rank} {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
+
+    # 6. 只发布已完成代理隧道下载测试的节点；订阅按实测 Mbps 降序。
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated")
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
-    print(f"\n已生成节点: {len(selected)} 个")
+    print(f"\n已生成真实测速节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
-    print("仅生成 Base64 订阅；不会写出明文节点文件。")
-    print(f"  → {QUALITY_REPORT} (聚合质量报告)")
+    print("订阅仅包含已通过实际代理下载测试的节点，按 Mbps 从高到低排序；不会提交节点 URI。")
+    print(f"  → {QUALITY_REPORT} (仅含哈希节点 ID 与聚合测速数据)")
 
 
 if __name__ == "__main__":
