@@ -158,6 +158,24 @@ class SourceUrlSecurityTests(unittest.TestCase):
         mocked_get.assert_called_once()
         self.assertFalse(mocked_get.call_args.kwargs.get("allow_redirects", True))
 
+    def test_source_download_has_total_deadline(self):
+        response = type("Response", (), {
+            "status_code": 200,
+            "headers": {},
+            "iter_content": lambda self, chunk_size: [b"vless://id@example.org:443"],
+        })()
+        manager = type("Manager", (), {
+            "__enter__": lambda self: response,
+            "__exit__": lambda self, *args: None,
+        })()
+        with patch.object(collector, "SOURCE_RETRIES", 0), \
+             patch("scripts.collector.requests.get", return_value=manager), \
+             patch("scripts.collector.time.monotonic", side_effect=[0.0, collector.SOURCE_DEADLINE + 1]):
+            self.assertEqual(
+                collector.fetch_source("https://raw.githubusercontent.com/owner/repo/main/list.txt"),
+                [],
+            )
+
     @patch("scripts.collector.requests.get")
     def test_rejects_untrusted_source_before_network_request(self, mocked_get):
         self.assertEqual(collector.fetch_source("http://127.0.0.1/secret"), [])
