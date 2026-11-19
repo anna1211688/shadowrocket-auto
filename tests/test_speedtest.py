@@ -63,12 +63,43 @@ class SingBoxOutboundTests(unittest.TestCase):
             "unknown_field",
         )
 
+
+    def test_xhttp_is_explicitly_unsupported_by_upstream_singbox(self):
+        with self.assertRaisesRegex(speedtest.UnsupportedNode, "xhttp"):
+            speedtest.build_outbound(
+                "vless://uuid@example.com:443?security=tls&type=xhttp&path=%2Fedge"
+            )
+
+    def test_socket_reset_has_safe_reason_code(self):
+        error = urllib.error.URLError(ConnectionResetError(104, "connection reset"))
+        diagnostic = speedtest._exception_diagnostic(error)
+        self.assertEqual(diagnostic["reason"], "connection_reset")
+        self.assertEqual(diagnostic["errno"], 104)
+
+    def test_balanced_shortlist_covers_protocols(self):
+        nodes = [
+            "vless://uuid1@example.com:443",
+            "vless://uuid2@example.com:443",
+            "trojan://secret@example.net:443",
+            "vmess://" + __import__("base64").urlsafe_b64encode(
+                b'{"add":"vmess.example","port":"443","id":"uuid","net":"tcp"}'
+            ).decode(),
+            "ss://" + base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=") + "@ss.example:8388",
+        ]
+        selected, unsupported = speedtest._balanced_speed_shortlist(nodes, 4)
+        protocols = {speedtest.collector.get_endpoint(uri)[0] for uri in selected}
+        self.assertEqual(len(selected), 4)
+        self.assertGreaterEqual(len(protocols), 3)
+        self.assertEqual(unsupported, [])
+
     def test_exception_diagnostics_keep_http_status_without_url(self):
         error = urllib.error.HTTPError(
             "https://user:secret@example.com/private", 403, "Forbidden", {}, None
         )
         diagnostic = speedtest._exception_diagnostic(error)
-        self.assertEqual(diagnostic, {"error_type": "HTTPError", "http_status": 403})
+        self.assertEqual(diagnostic["error_type"], "HTTPError")
+        self.assertEqual(diagnostic["http_status"], 403)
+        self.assertEqual(diagnostic["reason"], "http_error")
         self.assertNotIn("secret", str(diagnostic))
 
 
