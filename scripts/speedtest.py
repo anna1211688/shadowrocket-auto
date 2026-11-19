@@ -146,10 +146,13 @@ def build_outbound(uri):
         if _first(query, "plugin"):
             raise UnsupportedNode("Shadowsocks plugins are not yet supported")
         userinfo = parsed.username or ""
-        try:
-            decoded = base64.urlsafe_b64decode(userinfo + "=" * (-len(userinfo) % 4)).decode()
-        except Exception:
-            decoded = urllib.parse.unquote(userinfo)
+        if parsed.password is not None:
+            decoded = urllib.parse.unquote(userinfo) + ":" + urllib.parse.unquote(parsed.password)
+        else:
+            try:
+                decoded = base64.urlsafe_b64decode(userinfo + "=" * (-len(userinfo) % 4)).decode()
+            except Exception:
+                decoded = urllib.parse.unquote(userinfo)
         if ":" not in decoded:
             raise UnsupportedNode("Shadowsocks method/password missing")
         method, password = decoded.split(":", 1)
