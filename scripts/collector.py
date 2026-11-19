@@ -32,6 +32,10 @@ MAX_LINE_LENGTH = 8_192
 MAX_SOURCES = 100
 USER_AGENT = "shadowrocket-auto/1.0"
 
+class DNSResolutionTimeout(Exception):
+    """Raised when the external DNS lookup exceeds its hard deadline."""
+
+
 # 协议优先级权重（数值越小越优先，同延迟时生效）
 PROTOCOL_WEIGHT = {
     "vless": 0,
@@ -122,7 +126,9 @@ def resolve_public_addresses(host: str) -> list[tuple]:
         for address in sorted(resolved):
             results.extend(socket.getaddrinfo(address, None, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST))
         return results
-    except (subprocess.TimeoutExpired, OSError, UnicodeError, ValueError, TypeError):
+    except subprocess.TimeoutExpired as exc:
+        raise DNSResolutionTimeout(host) from exc
+    except (OSError, UnicodeError, ValueError, TypeError):
         return []
 
 def is_public_ip(host: str) -> bool:
@@ -351,7 +357,7 @@ def test_node(line: str):
         if latency > MAX_LATENCY:
             return "slow", line, latency, protocol
         return "ok", line, latency, protocol
-    except (socket.timeout, TimeoutError):
+    except (socket.timeout, TimeoutError, DNSResolutionTimeout):
         return "timeout", line, None, protocol
     except Exception:
         return "timeout", line, None, protocol
