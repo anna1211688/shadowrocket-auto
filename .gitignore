@@ -7,3 +7,5 @@ docs/*_plain.txt
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+docs/shadowrocket.txt
