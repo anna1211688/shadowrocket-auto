@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-19T15:50:09.030709+00:00",
+  "generated_at": "2026-11-19T16:10:24.805357+00:00",
   "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
   "ranking": "measured_proxy_download_mbps_descending",
   "speed_test": {
@@ -12,21 +12,216 @@
       "p50": null,
       "p95": null
     },
-    "top_nodes": []
+    "top_nodes": [],
+    "failure_diagnostics": [
+      {
+        "protocol": "vless",
+        "status": "unsupported",
+        "stage": "build_outbound",
+        "reason": "transport xhttp not yet supported"
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "unsupported",
+        "stage": "build_outbound",
+        "reason": "transport xhttp not yet supported"
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "vless",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "hysteria2",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError"
+      },
+      {
+        "protocol": "hysteria2",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "hysteria2",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError"
+      },
+      {
+        "protocol": "hysteria2",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError",
+        "errno": 104
+      },
+      {
+        "protocol": "hysteria2",
+        "status": "download_failed",
+        "stage": "proxy_https_request",
+        "reason": "URLError",
+        "error_type": "URLError"
+      }
+    ]
   },
   "note": "Subscription order is based on measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed.",
   "subscription_status": "preserved_previous",
   "raw_nodes": 5445,
-  "unique_candidates": 4471,
-  "tcp_reachable": 2788,
+  "unique_candidates": 4473,
+  "tcp_reachable": 2772,
   "udp_unverified": 217,
   "rejected": {
-    "ok": 2788,
+    "ok": 2772,
     "slow": 0,
-    "timeout": 1346,
+    "timeout": 1363,
     "invalid": 127,
-    "private": 140,
-    "duplicate": 827,
+    "private": 141,
+    "duplicate": 825,
     "udp_unverified": 217,
     "skipped_limit": 0,
     "proxy_speed_tested": 25,
@@ -35,28 +230,28 @@
     "proxy_speed_failed_or_unsupported": 25
   },
   "protocol_counts": {
-    "ss": 310,
-    "trojan": 363,
-    "vless": 1665,
+    "ss": 306,
+    "trojan": 364,
+    "vless": 1652,
     "vmess": 450
   },
   "region_counts": {
     "DE": 109,
     "GB": 65,
-    "HK": 19,
-    "JP": 24,
-    "KR": 11,
-    "OTHER": 2313,
+    "HK": 21,
+    "JP": 23,
+    "KR": 12,
+    "OTHER": 2291,
     "SG": 46,
-    "TW": 1,
-    "US": 200
+    "TW": 7,
+    "US": 198
   },
   "latency_ms": {
-    "min": 1.5,
-    "average": 94.5,
-    "p50": 49.3,
-    "p95": 221.9,
-    "jitter_average": 45.1,
-    "jitter_p95": 37.8
+    "min": 1.2,
+    "average": 114.3,
+    "p50": 67.1,
+    "p95": 230.8,
+    "jitter_average": 55.8,
+    "jitter_p95": 63.9
   }
 }
