@@ -37,7 +37,7 @@ MAX_TOTAL_NODES = 20_000
 MAX_LINE_LENGTH = 8_192
 MAX_SOURCES = 50
 MAX_SOURCE_WORKERS = 10
-MAX_TEST_CANDIDATES = 1_500
+MAX_TEST_CANDIDATES = 5_000
 USER_AGENT = "shadowrocket-auto/1.0"
 
 class DNSResolutionTimeout(Exception):
@@ -629,7 +629,10 @@ def main():
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil
-    from scripts.speedtest import rank_by_speed
+    try:
+        from .speedtest import rank_by_speed
+    except ImportError:  # python scripts/collector.py
+        from speedtest import rank_by_speed
     binary = os.environ.get("SING_BOX_PATH") or shutil.which("sing-box")
     if not binary:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
