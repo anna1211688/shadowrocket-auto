@@ -1036,15 +1036,22 @@ def test_node(line: str):
     except Exception:
         return "timeout", line, None, protocol, None
 
+# 例外白名单：个别经用户逐个批准的非 GitHub 源主机。保持逐个批准、
+# 不开放通配或子域，避免采集器被任意 URL 滥用（SSRF 面不变）。
+# aa.mibei77.com：米贝订阅，2026-11-20 用户批准加入（其节点深圳实测
+# 大批可连）；链接为按月目录的快照地址，失效后该源自然无产出。
+EXTRA_SOURCE_HOSTS = {"aa.mibei77.com"}
+
+
 def is_allowed_source_url(url: str) -> bool:
-    """仅允许可信的 raw GitHub 源，避免配置/重定向把采集器变成 SSRF 代理。"""
+    """仅允许 raw GitHub 源与逐个批准的例外主机，避免把采集器变成 SSRF 代理。"""
     if not isinstance(url, str) or len(url) > 2_048:
         return False
     try:
         parsed = urllib.parse.urlsplit(url)
         return (
             parsed.scheme == "https"
-            and parsed.hostname == "raw.githubusercontent.com"
+            and (parsed.hostname == "raw.githubusercontent.com" or parsed.hostname in EXTRA_SOURCE_HOSTS)
             and parsed.port in (None, 443)
             and parsed.username is None
             and parsed.password is None
@@ -1056,7 +1063,7 @@ def is_allowed_source_url(url: str) -> bool:
 
 def fetch_source(url: str) -> list[str]:
     if not is_allowed_source_url(url):
-        print('[源拒绝] 仅允许 HTTPS raw.githubusercontent.com')
+        print('[源拒绝] 仅允许 HTTPS 白名单源（raw.githubusercontent.com 及批准的例外）')
         return []
     last_error = None
     # One deadline covers every attempt and the retry delay; retries never reset the budget.

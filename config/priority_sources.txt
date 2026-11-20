@@ -6,3 +6,6 @@ https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 # free-nodes/v2rayfree：39 个节点的小文件（SS 17 个），2026-11-20
 # 晚深圳实测其 SS 大批可连（截图可见 14+ 个）。
 https://raw.githubusercontent.com/free-nodes/v2rayfree/main/sub
+# 米贝订阅：123 个节点，2026-11-20 深圳实测大批可连（Vision/SS）；
+# 非 GitHub 源，靠 EXTRA_SOURCE_HOSTS 白名单放行；快照链接可能失效。
+https://aa.mibei77.com/202611/11.2064bagtq.txt

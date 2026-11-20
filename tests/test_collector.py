@@ -152,6 +152,10 @@ class SourceUrlSecurityTests(unittest.TestCase):
         self.assertTrue(collector.is_allowed_source_url(
             "https://raw.githubusercontent.com/owner/repo/main/list.txt"
         ))
+        # 逐个批准的例外主机（米贝订阅，2026-11-20 用户批准）。
+        self.assertTrue(collector.is_allowed_source_url(
+            "https://aa.mibei77.com/202611/11.2064bagtq.txt"
+        ))
         for url in (
             "http://raw.githubusercontent.com/owner/repo/main/list.txt",
             "https://github.com/owner/repo",
@@ -160,6 +164,9 @@ class SourceUrlSecurityTests(unittest.TestCase):
             "https://raw.githubusercontent.com:8443/owner/repo/file",
             "file:///etc/passwd",
             "https://127.0.0.1/private",
+            "https://mibei77.com/202611/11.2064bagtq.txt",
+            "https://sub.aa.mibei77.com/202611/11.2064bagtq.txt",
+            "http://aa.mibei77.com/202611/11.2064bagtq.txt",
         ):
             self.assertFalse(collector.is_allowed_source_url(url), url)
 
