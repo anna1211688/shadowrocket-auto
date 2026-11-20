@@ -122,11 +122,13 @@ def github_token() -> str | None:
         if value:
             return value.strip()
     try:
+        # 不能用 --local：checkout 把凭据放在 RUNNER_TEMP 的独立配置文件里，
+        # 本地配置只有一条 include.path 指向它，必须让 git 跟随 include 解析。
         completed = subprocess.run(
-            ["git", "config", "--local", "--get", "http.https://github.com/.extraheader"],
+            ["git", "config", "--get-all", "http.https://github.com/.extraheader"],
             check=False, capture_output=True, text=True, timeout=5,
         )
-        header = completed.stdout.strip()
+        header = completed.stdout.strip().splitlines()[-1].strip() if completed.stdout.strip() else ""
         if header.lower().startswith("authorization: basic "):
             decoded = base64.b64decode(header.split(" ", 2)[-1]).decode("utf-8", "replace")
             if ":" in decoded:

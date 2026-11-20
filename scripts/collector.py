@@ -1274,7 +1274,7 @@ def test_node(line: str):
 # 不开放通配或子域，避免采集器被任意 URL 滥用（SSRF 面不变）。
 # aa.mibei77.com：米贝订阅，2026-11-20 用户批准加入（其节点深圳实测
 # 大批可连）；链接为按月目录的快照地址，失效后该源自然无产出。
-EXTRA_SOURCE_HOSTS = {"aa.mibei77.com"}
+EXTRA_SOURCE_HOSTS = {"aa.mibei77.com", "tian.zmxoo.xyz"}
 
 
 def is_allowed_source_url(url: str) -> bool:
