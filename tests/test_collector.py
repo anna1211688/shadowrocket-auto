@@ -358,6 +358,17 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(len(tcp1), 200)
         self.assertNotEqual(set(tcp1), set(tcp2))
 
+    def test_dedupe_by_endpoint_keeps_first_per_server(self):
+        nodes = [
+            ("trojan://pass1@Example.com:443", {"download_mbps": 9.0}),
+            ("trojan://pass2@example.com:443", {"download_mbps": 8.0}),
+            ("trojan://pass3@example.com:8443", {"download_mbps": 7.0}),
+            ("vless://uuid@other.com:443?security=reality&pbk=k", {"download_mbps": 6.0}),
+        ]
+        kept, dropped = collector.dedupe_by_endpoint(nodes)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([uri for uri, _ in kept], [nodes[0][0], nodes[2][0], nodes[3][0]])
+
     def test_ss_and_hy2_are_tier_c(self):
         userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         self.assertEqual(collector.cn_tier(f"ss://{userinfo}@example.com:8388"), 2)

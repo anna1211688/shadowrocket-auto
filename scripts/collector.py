@@ -346,6 +346,27 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
     return tcp_shortlist, _rotate(udp_candidates, rng)[:SPEED_UDP_LIMIT]
 
 
+def dedupe_by_endpoint(nodes: list[tuple]) -> list[tuple]:
+    """同一服务器（host:端口）只保留第一条。
+
+    输入须已按期望顺序排好（档位、再 Mbps）：公开池里同一台服务器常
+    以多个密码出现多次，对客户端那是同一台机器——IP 被封会成片失效，
+    订阅里只留最快的一条，其余丢弃。返回 (保留列表, 丢弃数)。
+    """
+    seen: set[tuple] = set()
+    kept: list[tuple] = []
+    dropped = 0
+    for uri, result in nodes:
+        _, host, port = get_endpoint(uri)
+        key = (str(host).lower(), port)
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        kept.append((uri, result))
+    return kept, dropped
+
+
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          alive: list[tuple],
                          subscription_status: str = "preserved_previous",
@@ -813,11 +834,14 @@ def main():
         return
 
     # 订阅排序：先大陆可用性档位，再按实测 Mbps，让客户端列表顶部
-    # 优先出现大陆最可能连通的节点。
+    # 优先出现大陆最可能连通的节点；再按服务器去重，只留独立节点。
     successful_speed_nodes.sort(key=lambda item: (cn_tier(item[0]), -item[1]["download_mbps"]))
-    selected = [uri for uri, _ in successful_speed_nodes[:MAX_NODES]]
+    ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
+    if dropped_dupes:
+        print(f"按服务器去重：丢弃同 host:端口 的重复节点 {dropped_dupes} 个，保留 {len(ranked_nodes)} 个独立节点")
+    selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
     print("订阅排序（档位 / Mbps）:")
-    for rank, (uri, result) in enumerate(successful_speed_nodes[:10], 1):
+    for rank, (uri, result) in enumerate(ranked_nodes[:10], 1):
         protocol, host, port = get_endpoint(uri)
         print(f"  #{rank} {'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
