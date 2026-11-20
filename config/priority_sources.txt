@@ -9,3 +9,6 @@ https://raw.githubusercontent.com/free-nodes/v2rayfree/main/sub
 # 米贝订阅：123 个节点，2026-11-20 深圳实测大批可连（Vision/SS）；
 # 非 GitHub 源，靠 EXTRA_SOURCE_HOSTS 白名单放行；快照链接可能失效。
 https://aa.mibei77.com/202611/11.2064bagtq.txt
+# End GFW 免费节点：仅 6 个自营节点（韩/新），2026-11-20 深圳实测 4/6 可连；
+# 固定地址，项目方每 10 分钟复检。
+https://raw.githubusercontent.com/hello-world-1989/cn-news/main/end-gfw-free

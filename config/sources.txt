@@ -33,3 +33,5 @@ https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/Eterni
 https://raw.githubusercontent.com/Huibq/TrojanLinks/master/links/vmess
 # 米贝订阅（非 GitHub 源，经白名单例外批准；按月快照链接，可能轮换失效）
 https://aa.mibei77.com/202611/11.2064bagtq.txt
+# End GFW 免费节点（项目方自营，每 10 分钟复检；固定地址）
+https://raw.githubusercontent.com/hello-world-1989/cn-news/main/end-gfw-free
