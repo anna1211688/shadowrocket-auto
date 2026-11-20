@@ -236,6 +236,23 @@ def build_outbound(uri):
         outbound["tls"] = tls or {"enabled": True, "server_name": _first(query, "sni", default=host)}
         return outbound
 
+    if protocol == "socks5":
+        outbound.update({"type": "socks", "version": "5"})
+        auth_user = urllib.parse.unquote(parsed.username or "")
+        auth_secret = parsed.password
+        if auth_secret is None and auth_user:
+            # 米贝等分享把 user:pass 整体 base64 后放进 userinfo；
+            # 解不出冒号分隔的凭据时按原样当用户名用。
+            try:
+                decoded = base64.b64decode(auth_user + "=" * (-len(auth_user) % 4)).decode()
+            except Exception:
+                decoded = ""
+            if ":" in decoded:
+                auth_user, _, auth_secret = decoded.partition(":")
+        if auth_user:
+            outbound.update({"username": auth_user, "password": auth_secret or ""})
+        return outbound
+
     raise UnsupportedNode(f"{protocol} is not yet supported by the speed tester")
 
 

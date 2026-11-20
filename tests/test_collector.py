@@ -404,6 +404,13 @@ class CnTierTests(unittest.TestCase):
         for line in veteran_lines:
             self.assertIn(line, tcp)
 
+    def test_socks5_recognised_as_tcp_tier_c(self):
+        line = "socks://MTIzOjEyMw@example.com:8888#ES node"
+        self.assertEqual(collector.get_protocol(line), "socks5")
+        self.assertEqual(collector.get_protocol("socks5://user:pass@example.com:1080"), "socks5")
+        self.assertEqual(collector.get_endpoint(line)[1:], ("example.com", 8888))
+        self.assertEqual(collector.cn_tier(line), 2)
+
     def test_infer_region_extended(self):
         self.assertEqual(collector.infer_region("ss://eA@202.50.253.90:19999#%E6%96%B0%E8%A5%BF%E5%85%B0%20NZ"), "NZ")
         self.assertEqual(collector.infer_region("trojan://pw@h.example:443#Canada 01"), "CA")

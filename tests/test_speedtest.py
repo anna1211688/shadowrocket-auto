@@ -42,6 +42,22 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(outbound["method"], "aes-128-gcm")
         self.assertEqual(outbound["password"], "secret")
 
+    def test_socks5_base64_userinfo_conversion(self):
+        userinfo = base64.b64encode(b"123:123").decode().rstrip("=")
+        outbound = speedtest.build_outbound(f"socks://{userinfo}@example.com:8888")
+        self.assertEqual(outbound["type"], "socks")
+        self.assertEqual(outbound["version"], "5")
+        self.assertEqual(outbound["username"], "123")
+        self.assertEqual(outbound["password"], "123")
+        self.assertEqual(outbound["server_port"], 8888)
+
+    def test_socks5_plain_and_no_auth_conversion(self):
+        outbound = speedtest.build_outbound("socks5://user:pass@example.com:1080")
+        self.assertEqual(outbound["username"], "user")
+        self.assertEqual(outbound["password"], "pass")
+        open_outbound = speedtest.build_outbound("socks://Og@example.com:38182")
+        self.assertNotIn("username", open_outbound)
+
     def test_vmess_conversion(self):
         raw = json.dumps({"add":"example.com","port":"443","id":"uuid","aid":"0","net":"ws","tls":"tls","host":"cdn.example","path":"/edge"}).encode()
         uri = "vmess://" + base64.urlsafe_b64encode(raw).decode()

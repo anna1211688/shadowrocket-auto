@@ -57,6 +57,7 @@ PROTOCOL_WEIGHT = {
     "tuic": 2,
     "vmess": 3,
     "ss": 4,
+    "socks5": 5,
 }
 # ====================================
 
@@ -112,8 +113,12 @@ def decode_subscription(content: str) -> list[str]:
 
 
 def get_protocol(line: str) -> str | None:
-    m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic)://", line, re.I)
-    return m.group(1).lower() if m else None
+    m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic|socks5?)://", line, re.I)
+    if not m:
+        return None
+    protocol = m.group(1).lower()
+    # socks 与 socks5 是同一种分享格式，统一记为 socks5。
+    return "socks5" if protocol in ("socks", "socks5") else protocol
 
 
 def normalize_dns_name(host: str) -> str | None:
@@ -693,7 +698,7 @@ def service_key(line: str) -> tuple:
                 origin = str(data.get("host") or data.get("sni") or "")
         except (ValueError, TypeError):
             pass
-    elif protocol in ("vless", "trojan", "ss", "hysteria2", "hy2", "tuic"):
+    elif protocol in ("vless", "trojan", "ss", "hysteria2", "hy2", "tuic", "socks5"):
         parts = urllib.parse.urlsplit(line)
         credential = parts.username or ""
         if protocol in ("vless", "trojan"):
@@ -956,7 +961,7 @@ def get_endpoint(line: str):
                 return None, None, None
             return protocol, host, port
 
-        if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic"):
+        if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "socks5"):
             parsed = urllib.parse.urlsplit(line)
             host = parsed.hostname
             port = parsed.port
