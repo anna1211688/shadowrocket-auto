@@ -312,13 +312,15 @@ def label_subscription(lines: list[str]) -> list[str]:
     """发布前统一命名：旗帜 + 中文地区 + 协议 + 同组序号。
 
     源站自带的名字多是广告或乱码（如 vless-1863464818），客户端根本
-    分不清节点在哪。地区按 infer_region 从原名/主机名推测，推不出
-    的标「未知地区」。序号按（地区, 协议）分别计数。
+    分不清节点在哪。地区按 resolve_region 推测：先看原名/主机名/SNI，
+    直连节点仍推不出时按端点 IP 查归属地，都不行的标「未知地区」。
+    序号按（地区, 协议）分别计数。
     """
     counters: dict[tuple, int] = {}
     labelled = []
+    geo_budget = {"used": 0}
     for line in lines:
-        region = infer_region(line)
+        region = resolve_region(line, geo_budget=geo_budget)
         protocol = get_protocol(line)
         display = _PROTOCOL_DISPLAY.get(protocol, protocol.upper())
         key = (region, display)
@@ -329,20 +331,29 @@ def label_subscription(lines: list[str]) -> list[str]:
 
 
 def get_node_label(line: str) -> str:
-    """提取节点备注及主机名，用于不依赖第三方服务的地区猜测。"""
+    """提取节点备注、主机名与 SNI/源站提示，用于地区猜测。
+
+    CF 前置节点的端点只是边缘 IP，真正的地区线索常在 SNI/Host 里
+    （如 jp3.yohototo.top），一并纳入推断文本。
+    """
     protocol = get_protocol(line)
     label = ""
+    hints = ""
     if protocol == "vmess":
         try:
             raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
             parsed = json.loads(raw)
-            label = str(parsed.get("ps", "")) if isinstance(parsed, dict) else ""
+            if isinstance(parsed, dict):
+                label = str(parsed.get("ps", ""))
+                hints = f"{parsed.get('host', '')} {parsed.get('sni', '')}"
         except (ValueError, TypeError):
             pass
     else:
         label = urllib.parse.unquote(urllib.parse.urlsplit(line).fragment)
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(line).query))
+        hints = f"{query.get('host', '')} {query.get('sni', '')}"
     _, host, _ = get_endpoint(line)
-    return f"{label} {host or ''}".lower()
+    return f"{label} {host or ''} {hints}".lower()
 
 
 # 裸国家代码按词元匹配（如「DE SS-34 | free-nodes」）；排除与英文
@@ -366,6 +377,80 @@ def infer_region(line: str) -> str:
         if region not in _CODE_TOKEN_EXCLUDE and region.lower() in tokens:
             return region
     return "OTHER"
+
+
+# --- IP 归属地兜底（仅发布改名阶段、关键词推不出地区时使用） ---
+GEOIP_ENDPOINT = "http://ip-api.com/json/{ip}?fields=status,countryCode"
+GEOIP_TIMEOUT = (3, 5)
+GEOIP_MAX_LOOKUPS = 40
+_geoip_cache: dict[str, str] = {}
+
+
+def region_for_country_code(code) -> str | None:
+    """ISO 国家代码映射到本项目的地区键；表里没有的返回 None。"""
+    if not isinstance(code, str) or not code:
+        return None
+    normalized = code.strip().upper()
+    if normalized == "UK":
+        normalized = "GB"
+    return normalized if normalized in REGION_FLAGS else None
+
+
+def lookup_region_by_ip(ip_text: str) -> str:
+    """查公网 IP 的归属国家；任何失败都返回 OTHER，绝不中断发布。
+
+    ip-api 免费端点限速且为 HTTP，因此只查公网 IP、结果按 IP 缓存、
+    超时短；调用方另有每轮次数上限（GEOIP_MAX_LOOKUPS）。
+    """
+    try:
+        ip = ipaddress.ip_address(str(ip_text))
+    except ValueError:
+        return "OTHER"
+    if not ip.is_global:
+        return "OTHER"
+    key = str(ip)
+    if key in _geoip_cache:
+        return _geoip_cache[key]
+    region = "OTHER"
+    try:
+        with requests.get(
+            GEOIP_ENDPOINT.format(ip=key),
+            timeout=GEOIP_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as resp:
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict) and data.get("status") == "success":
+                    region = region_for_country_code(data.get("countryCode")) or "OTHER"
+    except Exception:
+        region = "OTHER"
+    _geoip_cache[key] = region
+    return region
+
+
+def resolve_region(line: str, *, geo_budget: dict | None = None) -> str:
+    """发布用地区：先关键词推断；仍未知且非 CF 前置时按端点 IP 查归属地。
+
+    CF 前置节点的端点是 Cloudflare anycast 边缘 IP，查归属地只会得到
+    错误国家，因此跳过（其线索已在 SNI/源站推断里用尽）。
+    """
+    region = infer_region(line)
+    if region != "OTHER" or cdn_fronted(line):
+        return region
+    if geo_budget is not None:
+        if geo_budget.get("used", 0) >= GEOIP_MAX_LOOKUPS:
+            return region
+        geo_budget["used"] = geo_budget.get("used", 0) + 1
+    _, host, _ = get_endpoint(line)
+    if not host:
+        return region
+    try:
+        addresses = resolve_public_addresses(host)
+    except Exception:
+        return region
+    if not addresses:
+        return region
+    return lookup_region_by_ip(addresses[0][4][0])
 
 
 def cn_tier(line: str) -> int:

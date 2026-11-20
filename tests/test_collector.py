@@ -147,6 +147,52 @@ class ProtocolAwareProbeTests(unittest.TestCase):
             self.assertEqual(result[0], "udp_unverified")
             self.assertIsNone(result[2])
 
+class GeoRegionTests(unittest.TestCase):
+    def test_sni_hint_infers_region_for_fronted_node(self):
+        node = "vless://uuid@104.21.0.87:443?security=reality&sni=jp3.yohototo.top&type=tcp#x"
+        self.assertEqual(collector.infer_region(node), "JP")
+
+    def test_country_code_mapping(self):
+        self.assertEqual(collector.region_for_country_code("NZ"), "NZ")
+        self.assertEqual(collector.region_for_country_code("uk"), "GB")
+        self.assertIsNone(collector.region_for_country_code("XX"))
+        self.assertIsNone(collector.region_for_country_code(""))
+
+    @patch("scripts.collector.requests.get")
+    def test_lookup_region_by_ip_success_and_failure(self, mocked_get):
+        collector._geoip_cache.clear()
+        resp = mocked_get.return_value.__enter__.return_value
+        resp.status_code = 200
+        resp.json.return_value = {"status": "success", "countryCode": "NZ"}
+        self.assertEqual(collector.lookup_region_by_ip("202.50.253.90"), "NZ")
+        resp.json.return_value = {"status": "fail"}
+        self.assertEqual(collector.lookup_region_by_ip("202.50.253.91"), "OTHER")
+
+    @patch("scripts.collector.requests.get")
+    def test_lookup_region_by_ip_skips_non_global(self, mocked_get):
+        self.assertEqual(collector.lookup_region_by_ip("203.0.113.5"), "OTHER")
+        self.assertEqual(collector.lookup_region_by_ip("192.168.1.1"), "OTHER")
+        mocked_get.assert_not_called()
+
+    @patch("scripts.collector.lookup_region_by_ip", return_value="NZ")
+    def test_resolve_region_uses_geo_for_direct_unknown(self, mocked_lookup):
+        node = "ss://YWVzLTI1Ni1nY206cGFzcw==@202.50.253.90:19999#x"
+        self.assertEqual(collector.resolve_region(node), "NZ")
+
+    @patch("scripts.collector.lookup_region_by_ip", return_value="US")
+    def test_resolve_region_skips_geo_for_fronted(self, mocked_lookup):
+        node = "vless://uuid@104.21.0.87:443?security=reality&sni=example.com&type=tcp#x"
+        self.assertEqual(collector.resolve_region(node), "OTHER")
+        mocked_lookup.assert_not_called()
+
+    @patch("scripts.collector.lookup_region_by_ip", return_value="NZ")
+    def test_label_subscription_uses_geo_region(self, mocked_lookup):
+        lines = ["ss://YWVzLTI1Ni1nY206cGFzcw==@202.50.253.90:19999#x"]
+        labelled = collector.label_subscription(lines)
+        name = urllib.parse.unquote(labelled[0].split("#", 1)[1])
+        self.assertEqual(name, "🇳🇿 新西兰 SS 01")
+
+
 class SourceUrlSecurityTests(unittest.TestCase):
     def test_allows_only_https_raw_github_sources(self):
         self.assertTrue(collector.is_allowed_source_url(
