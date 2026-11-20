@@ -450,6 +450,41 @@ class CnTierTests(unittest.TestCase):
         for line in veteran_lines:
             self.assertIn(line, tcp)
 
+    def test_classify_egress_ips(self):
+        payload = [
+            {"status": "success", "query": "193.32.10.7", "countryCode": "IT", "hosting": True, "proxy": False, "mobile": False},
+            {"status": "success", "query": "103.20.5.9", "countryCode": "JP", "hosting": False, "proxy": False, "mobile": False},
+            {"status": "success", "query": "45.148.10.5", "countryCode": "US", "hosting": False, "proxy": True, "mobile": False},
+        ]
+
+        class FakeResponse:
+            status_code = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def json(self):
+                return payload
+
+        with unittest.mock.patch.object(collector.requests, "post", return_value=FakeResponse()) as post:
+            classified = collector.classify_egress_ips(["193.32.10.7", "103.20.5.9", "45.148.10.5", "10.0.0.1"])
+        self.assertEqual(classified["193.32.10.7"], {"region": "IT", "type": "datacenter"})
+        self.assertEqual(classified["103.20.5.9"], {"region": "JP", "type": "residential"})
+        self.assertEqual(classified["45.148.10.5"]["type"], "proxy")
+        self.assertNotIn("10.0.0.1", classified)
+        sent = post.call_args.kwargs["json"]
+        self.assertNotIn("10.0.0.1", sent)
+
+    def test_label_subscription_prefers_egress_region(self):
+        line = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@nz.example.com:8388#nz-node"
+        key = collector.get_dedup_key(line)
+        labelled = collector.label_subscription([line], egress_regions={key: "IT"})
+        name = urllib.parse.unquote(labelled[0].split("#", 1)[1])
+        self.assertIn("意大利", name)
+
     def test_new_protocols_recognised(self):
         self.assertEqual(collector.get_protocol("hysteria://h:443?auth=x"), "hysteria")
         self.assertEqual(collector.get_protocol("anytls://p@h:443"), "anytls")

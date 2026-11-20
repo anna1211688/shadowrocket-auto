@@ -312,7 +312,7 @@ def rename_node(line: str, name: str) -> str:
     return base + "#" + urllib.parse.quote(name, safe="")
 
 
-def label_subscription(lines: list[str]) -> list[str]:
+def label_subscription(lines: list[str], egress_regions: dict | None = None) -> list[str]:
     """发布前统一命名：旗帜 + 中文地区 + 协议 + 同组序号。
 
     源站自带的名字多是广告或乱码（如 vless-1863464818），客户端根本
@@ -324,7 +324,13 @@ def label_subscription(lines: list[str]) -> list[str]:
     labelled = []
     geo_budget = {"used": 0}
     for line in lines:
-        region = resolve_region(line, geo_budget=geo_budget)
+        # 出口国家是实测真值，优先于一切名字/归属地推测（意大利误标
+        # 新西兰的教训）；没有出口数据时才走推测链。
+        egress_region = (egress_regions or {}).get(get_dedup_key(line))
+        if egress_region and egress_region != "OTHER":
+            region = egress_region
+        else:
+            region = resolve_region(line, geo_budget=geo_budget)
         protocol = get_protocol(line)
         display = _PROTOCOL_DISPLAY.get(protocol, protocol.upper())
         key = (region, display)
@@ -430,6 +436,65 @@ def lookup_region_by_ip(ip_text: str) -> str:
         region = "OTHER"
     _geoip_cache[key] = region
     return region
+
+
+EGRESS_BATCH_API = "http://ip-api.com/batch?fields=status,countryCode,proxy,hosting,mobile,query"
+
+
+def classify_egress_ips(ips) -> dict:
+    """批量分类出口 IP：{ip: {"region": 地区键|None, "type": 分类}}。
+
+    分类口径：hosting→datacenter、proxy→proxy（已知代理出口）、
+    mobile→mobile、其余→residential。一次批量请求（上限 100 个），
+    任何失败返回 {}。原始出口 IP 只在内存中使用，不写入报告——
+    报告只记聚合计数与国家级信息。
+    """
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in ips:
+        try:
+            ip = ipaddress.ip_address(str(value))
+        except ValueError:
+            continue
+        if ip.is_global and str(ip) not in seen:
+            seen.add(str(ip))
+            unique.append(str(ip))
+    if not unique:
+        return {}
+    try:
+        with requests.post(
+            EGRESS_BATCH_API,
+            json=unique[:100],
+            timeout=(5, 15),
+            headers={"User-Agent": USER_AGENT},
+        ) as resp:
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+    except Exception:
+        return {}
+    classified: dict[str, dict] = {}
+    if not isinstance(data, list):
+        return classified
+    for item in data:
+        if not isinstance(item, dict) or item.get("status") != "success":
+            continue
+        ip = item.get("query")
+        if not isinstance(ip, str):
+            continue
+        if item.get("hosting"):
+            egress_type = "datacenter"
+        elif item.get("proxy"):
+            egress_type = "proxy"
+        elif item.get("mobile"):
+            egress_type = "mobile"
+        else:
+            egress_type = "residential"
+        classified[ip] = {
+            "region": region_for_country_code(item.get("countryCode")),
+            "type": egress_type,
+        }
+    return classified
 
 
 def resolve_region(line: str, *, geo_budget: dict | None = None) -> str:
@@ -918,7 +983,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          selected: list[str] | None = None,
                          history: dict | None = None,
                          discovered: dict | None = None,
-                         discovery_stats: dict | None = None) -> None:
+                         discovery_stats: dict | None = None,
+                         egress_summary: dict | None = None) -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -981,6 +1047,9 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "protocol": protocol,
             "download_mbps": round(float(result["download_mbps"]), 2),
             "tcp_latency_ms": round(latency * 1000, 1) if latency is not None else None,
+            # 出口质量（国家级信息＋分类，不含原始出口 IP）。
+            **({"egress_region": result["egress_region"]} if result.get("egress_region") else {}),
+            **({"egress_type": result["egress_type"]} if result.get("egress_type") else {}),
         })
 
     report_now = datetime.datetime.now(datetime.timezone.utc)
@@ -1002,6 +1071,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 "p95": percentile(sorted(speed_values), 0.95),
             },
             "top_nodes": speed_nodes,
+            **({"egress": egress_summary} if egress_summary is not None else {}),
             "diagnostic_counts": diagnostic_counts,
             "failure_diagnostics": [
                 {
@@ -1441,10 +1511,43 @@ def main():
     stats["udp_unverified"] = max(0, stats.get("udp_unverified", 0) - stats["udp_speed_verified"])
     stats["proxy_speed_failed_or_unsupported"] = len(speed_results) - len(successful_speed_nodes)
 
+    # 出口 IP 质量检测：测速时经隧道实测到的出口 IP 在此批量分类
+    # （数据中心/住宅/移动/已知代理出口＋出口国家）。原始出口 IP 只在
+    # 本进程内使用，标注完立即从结果里抹掉，绝不写入公开报告。
+    egress_classified = classify_egress_ips(
+        result.get("egress_ip") for _, result in successful_speed_nodes
+    )
+    egress_regions: dict[str, str] = {}
+    egress_by_type: dict[str, int] = {}
+    egress_checked = 0
+    label_mismatch = 0
+    for uri, result in successful_speed_nodes:
+        egress_ip = result.pop("egress_ip", None)
+        if not egress_ip:
+            continue
+        egress_checked += 1
+        info = egress_classified.get(egress_ip)
+        if not info:
+            continue
+        egress_by_type[info["type"]] = egress_by_type.get(info["type"], 0) + 1
+        if info["region"]:
+            result["egress_region"] = info["region"]
+            result["egress_type"] = info["type"]
+            egress_regions[get_dedup_key(uri)] = info["region"]
+            inferred = infer_region(uri)
+            if inferred != "OTHER" and inferred != info["region"]:
+                label_mismatch += 1
+    egress_summary = {
+        "checked": egress_checked,
+        "classified": sum(egress_by_type.values()),
+        "by_type": egress_by_type,
+        "label_region_mismatch": label_mismatch,
+    }
+
     if not successful_speed_nodes:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous", speed_results,
                              history=update_node_history(history, [e[0] for e in alive], [], run_now),
-                             discovered=discovered_state, discovery_stats=discovery_stats)
+                             discovered=discovered_state, discovery_stats=discovery_stats, egress_summary=egress_summary)
         print("没有节点通过实际代理下载测试，保留上一版订阅。")
         return
 
@@ -1470,9 +1573,9 @@ def main():
         print(f"  #{rank} {fronted_mark}{'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
     # 6. 只发布已完成代理隧道下载测试的节点；发布名统一为中文地区标记。
-    content = base64.b64encode("\n".join(label_subscription(selected)).encode("utf-8")).decode("ascii")
+    content = base64.b64encode("\n".join(label_subscription(selected, egress_regions=egress_regions)).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats)
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats, egress_summary=egress_summary)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     print(f"\n已生成真实测速节点: {len(selected)} 个")

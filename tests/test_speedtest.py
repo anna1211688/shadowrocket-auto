@@ -69,6 +69,29 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(secure["type"], "http")
         self.assertTrue(secure["tls"]["enabled"])
 
+    def test_probe_egress_ip(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, _size):
+                return b"fl=1f1\nh=www.cloudflare.com\nip=203.0.113.7\nts=1\n"
+
+        class FakeOpener:
+            def open(self, request, timeout=None):
+                return FakeResponse()
+
+        self.assertEqual(speedtest._probe_egress_ip(FakeOpener()), "203.0.113.7")
+
+        class BrokenOpener:
+            def open(self, request, timeout=None):
+                raise OSError("tunnel down")
+
+        self.assertIsNone(speedtest._probe_egress_ip(BrokenOpener()))
+
     def test_socks5_base64_userinfo_conversion(self):
         userinfo = base64.b64encode(b"123:123").decode().rstrip("=")
         outbound = speedtest.build_outbound(f"socks://{userinfo}@example.com:8888")

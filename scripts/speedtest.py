@@ -4,6 +4,7 @@ Only explicitly supported share-link forms are tested. Unsupported formats are
 reported as skipped; they are never treated as successful or assigned fake Mbps.
 """
 import base64
+import ipaddress
 import json
 import os
 import socket
@@ -366,6 +367,34 @@ def _exception_diagnostic(exc):
     return detail
 
 
+EGRESS_TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace"
+
+
+def _probe_egress_ip(opener) -> str | None:
+    """经隧道读 Cloudflare trace 得到节点真实出口 IP；失败返回 None。
+
+    只在测速成功后顺带做（sing-box 还开着），失败不影响测速结果。
+    出口 IP 只用于内存中的质量分类与地区校验，不写进任何报告。
+    """
+    try:
+        request = urllib.request.Request(
+            EGRESS_TRACE_URL,
+            headers={"User-Agent": "shadowrocket-auto-speedtest/1.0"},
+        )
+        with opener.open(request, timeout=4) as response:
+            text = response.read(4096).decode("utf-8", "replace")
+    except Exception:
+        return None
+    for line in text.splitlines():
+        if line.startswith("ip="):
+            candidate = line[3:].strip()
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                return None
+    return None
+
+
 def measure_node(uri, binary):
     started = time.monotonic()
     stage = "build_outbound"
@@ -489,12 +518,14 @@ def measure_node(uri, binary):
                     rates.append((len(payload) * 8) / elapsed / 1_000_000)
                 rates.sort()
                 median = rates[len(rates) // 2] if len(rates) % 2 else sum(rates) / 2
+                egress_ip = _probe_egress_ip(opener)
                 return {
                     "status": "ok",
                     "stage": "complete",
                     "download_mbps": round(median, 2),
                     "samples_mbps": [round(rate, 2) for rate in rates],
                     "elapsed_seconds": round(time.monotonic() - started, 2),
+                    **({"egress_ip": egress_ip} if egress_ip else {}),
                 }
     except Exception as exc:
         return {
