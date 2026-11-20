@@ -236,6 +236,49 @@ def build_outbound(uri):
         outbound["tls"] = tls or {"enabled": True, "server_name": _first(query, "sni", default=host)}
         return outbound
 
+    if protocol == "hysteria":
+        # Hysteria v1：sing-box 的 type=hysteria；auth 在查询参数里。
+        outbound.update({"type": "hysteria"})
+        auth = _first(query, "auth")
+        if auth:
+            outbound["auth_str"] = auth
+        for field, key in (("upmbps", "up_mbps"), ("downmbps", "down_mbps")):
+            raw_value = _first(query, field)
+            if raw_value:
+                try:
+                    outbound[key] = int(float(raw_value))
+                except ValueError:
+                    pass
+        obfs = _first(query, "obfsParam", "obfsparam")
+        if obfs:
+            outbound["obfs"] = obfs
+        tls = {"enabled": True, "server_name": _first(query, "peer", "sni", default=host)}
+        insecure = _first(query, "insecure", "allowInsecure")
+        if insecure.lower() in ("1", "true", "yes"):
+            tls["insecure"] = True
+        outbound["tls"] = tls
+        return outbound
+
+    if protocol == "anytls":
+        auth_secret = urllib.parse.unquote(parsed.username or "")
+        if not auth_secret:
+            raise UnsupportedNode("AnyTLS password missing")
+        outbound.update({"type": "anytls", "password": auth_secret})
+        outbound["tls"] = _tls(query, host, "tls") or {
+            "enabled": True,
+            "server_name": _first(query, "sni", default=host),
+        }
+        return outbound
+
+    if protocol in ("http", "https"):
+        outbound.update({"type": "http"})
+        auth_user = urllib.parse.unquote(parsed.username or "")
+        if auth_user:
+            outbound.update({"username": auth_user, "password": parsed.password or ""})
+        if protocol == "https":
+            outbound["tls"] = {"enabled": True, "server_name": host}
+        return outbound
+
     if protocol == "socks5":
         outbound.update({"type": "socks", "version": "5"})
         auth_user = urllib.parse.unquote(parsed.username or "")

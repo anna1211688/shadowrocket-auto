@@ -59,6 +59,9 @@ PROTOCOL_WEIGHT = {
     "vmess": 3,
     "ss": 4,
     "socks5": 5,
+    "anytls": 1,
+    "http": 6,
+    "https": 6,
 }
 # ====================================
 
@@ -114,7 +117,7 @@ def decode_subscription(content: str) -> list[str]:
 
 
 def get_protocol(line: str) -> str | None:
-    m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic|socks5?)://", line, re.I)
+    m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic|socks5?|anytls|https?)://", line, re.I)
     if not m:
         return None
     protocol = m.group(1).lower()
@@ -282,7 +285,7 @@ REGION_FLAGS = {
     "AE": "🇦🇪", "IL": "🇮🇱", "KZ": "🇰🇿", "OTHER": "🌐",
 }
 
-_PROTOCOL_DISPLAY = {"hysteria2": "HY2", "hy2": "HY2"}
+_PROTOCOL_DISPLAY = {"hysteria2": "HY2", "hy2": "HY2", "hysteria": "Hysteria", "anytls": "AnyTLS"}
 
 
 def rename_node(line: str, name: str) -> str:
@@ -473,7 +476,8 @@ def cn_tier(line: str) -> int:
         if security == "tls":
             return 0 if port == 443 else 1
         return 2
-    if protocol == "trojan":
+    if protocol in ("trojan", "anytls"):
+        # AnyTLS 同为 TLS 承载，伪装特性与 Trojan 相近，同档处理。
         return 0 if port == 443 else 1
     if protocol == "vmess":
         try:
@@ -846,7 +850,7 @@ def service_key(line: str) -> tuple:
                 origin = str(data.get("host") or data.get("sni") or "")
         except (ValueError, TypeError):
             pass
-    elif protocol in ("vless", "trojan", "ss", "hysteria2", "hy2", "tuic", "socks5"):
+    elif protocol in ("vless", "trojan", "ss", "hysteria2", "hy2", "tuic", "socks5", "anytls", "http", "https", "hysteria"):
         parts = urllib.parse.urlsplit(line)
         credential = parts.username or ""
         if protocol in ("vless", "trojan"):
@@ -1116,7 +1120,7 @@ def get_endpoint(line: str):
                 return None, None, None
             return protocol, host, port
 
-        if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "socks5"):
+        if protocol in ("vless", "trojan", "hysteria", "hysteria2", "hy2", "tuic", "socks5", "anytls", "http", "https"):
             parsed = urllib.parse.urlsplit(line)
             host = parsed.hostname
             port = parsed.port
@@ -1432,7 +1436,7 @@ def main():
     stats["proxy_speed_ok"] = len(successful_speed_nodes)
     stats["udp_speed_verified"] = sum(
         1 for uri, result in successful_speed_nodes
-        if get_endpoint(uri)[0] in ("hysteria2", "hy2", "tuic")
+        if get_endpoint(uri)[0] in ("hysteria", "hysteria2", "hy2", "tuic")
     )
     stats["udp_unverified"] = max(0, stats.get("udp_unverified", 0) - stats["udp_speed_verified"])
     stats["proxy_speed_failed_or_unsupported"] = len(speed_results) - len(successful_speed_nodes)

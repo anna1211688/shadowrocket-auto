@@ -42,6 +42,33 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(outbound["method"], "aes-128-gcm")
         self.assertEqual(outbound["password"], "secret")
 
+    def test_hysteria_v1_conversion(self):
+        outbound = speedtest.build_outbound(
+            "hysteria://example.com:443?protocol=udp&auth=secret&peer=sni.example&insecure=1&upmbps=50&downmbps=200&obfsParam=obfsvalue"
+        )
+        self.assertEqual(outbound["type"], "hysteria")
+        self.assertEqual(outbound["auth_str"], "secret")
+        self.assertEqual(outbound["up_mbps"], 50)
+        self.assertEqual(outbound["down_mbps"], 200)
+        self.assertEqual(outbound["obfs"], "obfsvalue")
+        self.assertEqual(outbound["tls"]["server_name"], "sni.example")
+        self.assertTrue(outbound["tls"]["insecure"])
+
+    def test_anytls_conversion(self):
+        outbound = speedtest.build_outbound("anytls://secret@example.com:443?sni=sni.example")
+        self.assertEqual(outbound["type"], "anytls")
+        self.assertEqual(outbound["password"], "secret")
+        self.assertEqual(outbound["tls"]["server_name"], "sni.example")
+
+    def test_http_proxy_conversion(self):
+        outbound = speedtest.build_outbound("http://user:pass@example.com:8080")
+        self.assertEqual(outbound["type"], "http")
+        self.assertEqual(outbound["username"], "user")
+        self.assertNotIn("tls", outbound)
+        secure = speedtest.build_outbound("https://example.com:8443")
+        self.assertEqual(secure["type"], "http")
+        self.assertTrue(secure["tls"]["enabled"])
+
     def test_socks5_base64_userinfo_conversion(self):
         userinfo = base64.b64encode(b"123:123").decode().rstrip("=")
         outbound = speedtest.build_outbound(f"socks://{userinfo}@example.com:8888")

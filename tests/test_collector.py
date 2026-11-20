@@ -450,6 +450,18 @@ class CnTierTests(unittest.TestCase):
         for line in veteran_lines:
             self.assertIn(line, tcp)
 
+    def test_new_protocols_recognised(self):
+        self.assertEqual(collector.get_protocol("hysteria://h:443?auth=x"), "hysteria")
+        self.assertEqual(collector.get_protocol("anytls://p@h:443"), "anytls")
+        self.assertEqual(collector.get_protocol("http://u:p@h:8080"), "http")
+        self.assertEqual(collector.get_protocol("https://h:8443"), "https")
+        self.assertEqual(collector.get_endpoint("anytls://p@example.com:443")[1:], ("example.com", 443))
+        # AnyTLS 是 TLS 承载：443 端口按 A 档，其余按 B 档（同 Trojan）。
+        self.assertEqual(collector.cn_tier("anytls://p@example.com:443"), 0)
+        self.assertEqual(collector.cn_tier("anytls://p@example.com:8443"), 1)
+        self.assertEqual(collector.cn_tier("http://u:p@example.com:8080"), 2)
+        self.assertEqual(collector.cn_tier("hysteria://example.com:443?auth=x"), 2)
+
     def test_socks5_recognised_as_tcp_tier_c(self):
         line = "socks://MTIzOjEyMw@example.com:8888#ES node"
         self.assertEqual(collector.get_protocol(line), "socks5")
