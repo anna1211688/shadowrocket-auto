@@ -18,6 +18,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
+PRIORITY_SOURCES = ROOT / "config" / "priority_sources.txt"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
@@ -364,6 +365,52 @@ def is_veteran(entry: dict | None, now: datetime.datetime) -> bool:
             and entry.get("a", 0) >= VETERAN_MIN_ALIVE_ROUNDS)
 
 
+def load_priority_sources() -> set:
+    """优先源名单（config/priority_sources.txt）：小型精选订阅。
+
+    优先源的节点每轮保送进候选（不受候选上限抽签影响），并在测速
+    名单里与老兵同列优先——像 Pawdroid 这种 9 个节点的小文件，节点
+    在普通源的大池子里出勤率太低，存活资历永远攒不起来。只放节点
+    少而精的源，滥用会挤占测速预算。
+    """
+    urls = set()
+    if PRIORITY_SOURCES.exists():
+        for line in PRIORITY_SOURCES.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                urls.add(line)
+    return urls
+
+
+def collect_candidates(priority_raw_nodes: list[str], raw_nodes: list[str], stats: dict):
+    """校验并去重，返回 (优先候选, 普通候选)；两列共用一套去重键，
+    优先源节点先占位，普通源里的同一节点算重复。"""
+    seen_keys: set = set()
+
+    def take(lines: list[str]) -> list[str]:
+        kept = []
+        for line in lines:
+            protocol, host, port = get_endpoint(line)
+            if not protocol or not host or not port:
+                stats["invalid"] += 1
+                continue
+            if not is_public_ip(host):
+                stats["private"] += 1
+                continue
+            key = get_dedup_key(line)
+            if key is None:
+                stats["invalid"] += 1
+                continue
+            if key in seen_keys:
+                stats["duplicate"] = stats.get("duplicate", 0) + 1
+                continue
+            seen_keys.add(key)
+            kept.append(line)
+        return kept
+
+    return take(priority_raw_nodes), take(raw_nodes)
+
+
 def load_node_history() -> dict:
     """从上一轮质量报告读回节点历史（报告由工作流提交回仓库）。"""
     try:
@@ -430,13 +477,15 @@ def _rotate(entries: list, rng: random.Random) -> list:
 
 
 def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None,
-                           history: dict | None = None, now: datetime.datetime | None = None):
+                           history: dict | None = None, now: datetime.datetime | None = None,
+                           priority_keys: set | None = None):
     """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B → C 档）。
 
     某组不足时，剩余名额按组优先级补位。
-    组内先保「老兵」（见 is_veteran，按历史测通轮次、测活轮次排序），
-    余量再按小时种子轮换抽取：alive 已按延迟排序，轮换让每小时被测的
-    是不同切片（切片内仍按延迟优先），避免长期只测同一批新面孔。
+    组内先保优先节点——「老兵」（见 is_veteran）与优先源节点，按历史
+    测通轮次、测活轮次排序；余量再按小时种子轮换抽取：alive 已按
+    延迟排序，轮换让每小时被测的是不同切片（切片内仍按延迟优先），
+    避免长期只测同一批新面孔。
     """
     if seed is None:
         seed = int(time.time() // 3600)
@@ -444,6 +493,7 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
     history = history or {}
+    priority_keys = priority_keys or set()
     # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B → C 档。
     groups: list[tuple[list[tuple], int]] = []
     fronted = [e for e in alive if cn_tier(e[0]) <= 1 and cdn_fronted(e[0])]
@@ -455,17 +505,22 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
     tcp_shortlist: list[str] = []
     leftovers: list[list[tuple]] = []
     for entries, quota in groups:
-        veterans = [e for e in entries if is_veteran(history.get(history_key(e[0])), now)]
-        veterans.sort(key=lambda e: (-history[history_key(e[0])].get("p", 0),
-                                     -history[history_key(e[0])].get("a", 0)))
-        veteran_lines = {e[0] for e in veterans}
-        others = [e for e in entries if e[0] not in veteran_lines]
+        def pref_rank(entry: tuple) -> tuple:
+            record = history.get(history_key(entry[0])) or {}
+            return (-record.get("p", 0), -record.get("a", 0))
+
+        preferred = [e for e in entries
+                     if history_key(e[0]) in priority_keys
+                     or is_veteran(history.get(history_key(e[0])), now)]
+        preferred.sort(key=pref_rank)
+        preferred_lines = {e[0] for e in preferred}
+        others = [e for e in entries if e[0] not in preferred_lines]
         rotated = _rotate(others, rng)
-        picked_veterans = [e[0] for e in veterans[:quota]]
-        picked = picked_veterans + _round_robin_by_protocol(rotated, quota - len(picked_veterans))
+        picked_preferred = [e[0] for e in preferred[:quota]]
+        picked = picked_preferred + _round_robin_by_protocol(rotated, quota - len(picked_preferred))
         tcp_shortlist.extend(picked)
         picked_lines = set(picked)
-        leftover_ordered = [e for e in veterans if e[0] not in picked_lines]
+        leftover_ordered = [e for e in preferred if e[0] not in picked_lines]
         leftover_ordered += [entry for entry in rotated if entry[0] not in picked_lines]
         leftovers.append(leftover_ordered)
     # 补位按组优先级进行，前组不足时由后组补满，反之亦然。
@@ -934,51 +989,32 @@ def main():
 
     print(f"共 {len(sources)} 个订阅源")
 
-    # 2. 拉取所有节点（带重试）
+    # 2. 拉取所有节点（带重试）；优先源单独收集，不受总量截断影响。
+    priority_urls = load_priority_sources()
     raw_nodes: list[str] = []
+    priority_raw_nodes: list[str] = []
     for offset in range(0, len(sources), MAX_SOURCE_WORKERS):
         batch = sources[offset:offset + MAX_SOURCE_WORKERS]
         with ThreadPoolExecutor(max_workers=MAX_SOURCE_WORKERS) as source_executor:
-            for nodes in source_executor.map(fetch_source, batch):
-                raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
-                if len(raw_nodes) >= MAX_TOTAL_NODES:
-                    break
-        if len(raw_nodes) >= MAX_TOTAL_NODES:
-            break
+            for source_url, nodes in zip(batch, source_executor.map(fetch_source, batch)):
+                if source_url in priority_urls:
+                    priority_raw_nodes.extend(nodes)
+                else:
+                    raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
 
-    # 3. 初步过滤 + 按端点、凭据和传输参数去重
+    # 3. 初步过滤 + 按端点、凭据和传输参数去重；优先候选不受上限约束。
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0, "udp_unverified": 0}
-    candidates = []
-    seen_keys = set()
+    priority_candidates, other_candidates = collect_candidates(priority_raw_nodes, raw_nodes, stats)
+    priority_keys = {history_key(line) for line in priority_candidates}
 
-    for line in raw_nodes:
-        protocol, host, port = get_endpoint(line)
-        if not protocol or not host or not port:
-            stats["invalid"] += 1
-            continue
-        # 域名在 test_node 中做 DNS 公网校验；这里仅排除明确的非公网 IP 字面量。
-        if not is_public_ip(host):
-            stats["private"] += 1
-            continue
-
-        key = get_dedup_key(line)
-        if key is None:
-            stats["invalid"] += 1
-            continue
-        if key in seen_keys:
-            stats["duplicate"] = stats.get("duplicate", 0) + 1
-            continue
-        seen_keys.add(key)
-        candidates.append(line)
-
-    unique_candidate_count = len(candidates)
+    unique_candidate_count = len(priority_candidates) + len(other_candidates)
     # 候选按源顺序排列时，测试上限会固定切掉排在后面的源（实测 11k 候选
     # 只测前 5k，后加的源永远轮不到）。按小时种子打散，让每小时一轮的
     # 覆盖范围轮换，长期每个源都有机会被测到。
-    random.Random(int(time.time() // 3600)).shuffle(candidates)
-    candidates = limit_candidates(candidates, stats)
+    random.Random(int(time.time() // 3600)).shuffle(other_candidates)
+    candidates = priority_candidates + limit_candidates(other_candidates, stats)
     print(
-        f"去重后候选节点: {unique_candidate_count}；"
+        f"去重后候选节点: {unique_candidate_count}（优先源保送 {len(priority_candidates)} 个）；"
         f"本轮最多检测 {len(candidates)} 个（超出上限跳过 {stats['skipped_limit']} 个）"
     )
 
@@ -1029,9 +1065,11 @@ def main():
     # 5. TCP 延迟只用于缩小候选范围；测速名单按档位配额选（见
     # select_speed_shortlist），订阅排序先档位、再实测 Mbps。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates, history=history, now=run_now)
+    tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates, history=history, now=run_now,
+                                                          priority_keys=priority_keys)
     veteran_picks = sum(1 for line in tcp_shortlist if is_veteran(history.get(history_key(line)), run_now))
-    print(f"本轮历史条目 {len(history)} 个，测速名单含老兵节点 {veteran_picks} 个")
+    priority_picks = sum(1 for line in tcp_shortlist if history_key(line) in priority_keys)
+    print(f"本轮历史条目 {len(history)} 个，测速名单含老兵节点 {veteran_picks} 个、优先源节点 {priority_picks} 个")
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil

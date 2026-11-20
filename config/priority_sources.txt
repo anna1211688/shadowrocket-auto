@@ -1,0 +1,5 @@
+# 优先源：节点少而精的小型精选订阅，每轮保送进候选与测速名单，
+# 不参加候选上限抽签。保持克制——只有这类源才放进来，滥用会挤占
+# 测速预算。Pawdroid 每日精选（v2cross 转发的也是它）：文件仅约
+# 9 个节点，2026-11-20 深圳实测其中 6 个可用。
+https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub

@@ -396,6 +396,28 @@ class CnTierTests(unittest.TestCase):
         for line in veteran_lines:
             self.assertIn(line, tcp)
 
+    def test_collect_candidates_priority_first_and_shared_dedup(self):
+        stats = {"invalid": 0, "private": 0, "duplicate": 0}
+        shared = "trojan://pw@shared.example:443"
+        priority_raw = [shared, "ss://" + base64.urlsafe_b64encode(b"aes-128-gcm:pw").decode().rstrip("=") + "@prio.example:8388"]
+        regular_raw = [shared, "trojan://pw2@other.example:443", "not-a-node"]
+        priority, regular = collector.collect_candidates(priority_raw, regular_raw, stats)
+        self.assertEqual(len(priority), 2)
+        self.assertEqual(regular, ["trojan://pw2@other.example:443"])
+        self.assertEqual(stats["duplicate"], 1)
+        self.assertEqual(stats["invalid"], 1)
+
+    def test_shortlist_priority_key_gets_seat(self):
+        ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
+        alive = []
+        priority_line = f"ss://{ss_userinfo}@prio.example:8388"
+        alive.append(self._entry(priority_line, "ss"))
+        for i in range(100):
+            alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
+        tcp, _ = collector.select_speed_shortlist(
+            alive, [], seed=1, priority_keys={collector.history_key(priority_line)})
+        self.assertIn(priority_line, tcp)
+
     def test_dedupe_for_subscription_caps_same_fronted_service(self):
         nodes = [
             (f"vless://same-uuid@104.16.10.{i}:443?security=tls&host=origin.example&sni=origin.example&type=ws", {"download_mbps": 9.0})
