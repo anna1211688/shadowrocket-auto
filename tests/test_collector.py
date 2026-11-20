@@ -346,6 +346,56 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(tiers.count(0), 5)
         self.assertEqual(tiers.count(2), 100)
 
+    def test_history_update_and_veteran_threshold(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 20, tzinfo=dt.timezone.utc)
+        line = "ss://" + base64.urlsafe_b64encode(b"aes-256-gcm:pw").decode().rstrip("=") + "@203.0.113.7:19999"
+        history = {}
+        for hours in range(0, 30, 5):
+            history = collector.update_node_history(history, [line], [line], now - dt.timedelta(hours=30 - hours))
+        entry = history[collector.history_key(line)]
+        self.assertEqual(entry["a"], 6)
+        self.assertEqual(entry["p"], 6)
+        self.assertTrue(collector.is_veteran(entry, now))
+        young = collector.update_node_history({}, [line], [], now)
+        self.assertFalse(collector.is_veteran(young[collector.history_key(line)], now))
+
+    def test_history_prunes_stale_entries(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 20, tzinfo=dt.timezone.utc)
+        line = "trojan://pw@198.51.100.9:443"
+        history = collector.update_node_history({}, [line], [], now - dt.timedelta(days=8))
+        self.assertIn(collector.history_key(line), history)
+        history = collector.update_node_history(history, [], [], now)
+        self.assertNotIn(collector.history_key(line), history)
+
+    def test_history_key_ignores_remark(self):
+        a = "trojan://pw@198.51.100.9:443#name-one"
+        b = "trojan://pw@198.51.100.9:443#name-two"
+        self.assertEqual(collector.history_key(a), collector.history_key(b))
+
+    def test_shortlist_prioritises_veterans_within_group(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 20, tzinfo=dt.timezone.utc)
+        ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
+        alive = []
+        veteran_lines = []
+        for i in range(5):
+            line = f"ss://{ss_userinfo}@vet{i}.example:8388"
+            veteran_lines.append(line)
+            alive.append(self._entry(line, "ss"))
+        for i in range(100):
+            alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
+        history = {}
+        for line in veteran_lines:
+            history[collector.history_key(line)] = {
+                "f": (now - dt.timedelta(days=3)).isoformat(),
+                "l": now.isoformat(), "a": 30, "p": 10,
+            }
+        tcp, _ = collector.select_speed_shortlist(alive, [], seed=1, history=history, now=now)
+        for line in veteran_lines:
+            self.assertIn(line, tcp)
+
     def test_dedupe_for_subscription_caps_same_fronted_service(self):
         nodes = [
             (f"vless://same-uuid@104.16.10.{i}:443?security=tls&host=origin.example&sni=origin.example&type=ws", {"download_mbps": 9.0})

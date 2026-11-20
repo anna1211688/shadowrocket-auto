@@ -1,4 +1,5 @@
 import base64
+import datetime
 import ipaddress
 import hashlib
 import json
@@ -324,6 +325,84 @@ TIER_TCP_QUOTAS = {0: 40, 1: 20, 2: 40}
 SPEED_TCP_LIMIT = 200
 SPEED_UDP_LIMIT = 0
 
+# 存活时长信号（2026-11-20 晚定）：深圳实测对照显示，小而稳定的
+# Pawdroid 订阅 9 个节点有 6 个可用，而我们每小时按「刚测速通过」
+# 新选的 30 个只有 1 个——公开池的新面孔多是短命诱饵，长期存活的
+# 节点才是真服务。历史随质量报告一同提交回仓库（工作流只提交该
+# 文件），跨轮累积每个节点被 TCP 测活/测速通过的轮次与首见时间；
+# 「老兵」＝首见 ≥24 小时且至少 6 个轮次 TCP 测活。选测速名单时
+# 每组先保老兵、余量再轮换抽新面孔；订阅排序同组内老兵靠前。
+VETERAN_MIN_AGE_HOURS = 24
+VETERAN_MIN_ALIVE_ROUNDS = 6
+HISTORY_PRUNE_DAYS = 7
+HISTORY_MAX_ENTRIES = 20000
+
+
+def history_key(line: str) -> str:
+    """节点在历史中的身份：用去重键（忽略备注名）的哈希。"""
+    key = get_dedup_key(line)
+    if key is None:
+        protocol, host, port = get_endpoint(line)
+        key = (protocol, str(host).lower(), port)
+    return hashlib.sha256(repr(key).encode("utf-8")).hexdigest()[:16]
+
+
+def _history_age_hours(entry: dict, now: datetime.datetime) -> float:
+    try:
+        first = datetime.datetime.fromisoformat(entry["f"])
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    if first.tzinfo is None:
+        first = first.replace(tzinfo=datetime.timezone.utc)
+    return max(0.0, (now - first).total_seconds() / 3600.0)
+
+
+def is_veteran(entry: dict | None, now: datetime.datetime) -> bool:
+    if not entry:
+        return False
+    return (_history_age_hours(entry, now) >= VETERAN_MIN_AGE_HOURS
+            and entry.get("a", 0) >= VETERAN_MIN_ALIVE_ROUNDS)
+
+
+def load_node_history() -> dict:
+    """从上一轮质量报告读回节点历史（报告由工作流提交回仓库）。"""
+    try:
+        report = json.loads(QUALITY_REPORT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    history = report.get("node_history")
+    return history if isinstance(history, dict) else {}
+
+
+def update_node_history(history: dict, alive_lines, passed_lines, now: datetime.datetime) -> dict:
+    """累积本轮结果并修剪：条目 {f:首见, l:最近见, a:测活轮次, p:测通轮次}。"""
+    stamp = now.isoformat()
+    updated = {key: dict(entry) for key, entry in history.items() if isinstance(entry, dict)}
+    for line in set(alive_lines):
+        key = history_key(line)
+        entry = updated.setdefault(key, {"f": stamp, "l": stamp, "a": 0, "p": 0})
+        entry["l"] = stamp
+        entry["a"] = entry.get("a", 0) + 1
+    for line in set(passed_lines):
+        entry = updated.get(history_key(line))
+        if entry is not None:
+            entry["p"] = entry.get("p", 0) + 1
+    cutoff = now - datetime.timedelta(days=HISTORY_PRUNE_DAYS)
+    pruned = {}
+    for key, entry in updated.items():
+        try:
+            last = datetime.datetime.fromisoformat(entry["l"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=datetime.timezone.utc)
+        if last >= cutoff:
+            pruned[key] = entry
+    if len(pruned) > HISTORY_MAX_ENTRIES:
+        by_recent = sorted(pruned.items(), key=lambda item: item[1]["l"], reverse=True)
+        pruned = dict(by_recent[:HISTORY_MAX_ENTRIES])
+    return pruned
+
 
 def _round_robin_by_protocol(entries: list[tuple], limit: int) -> list[str]:
     protocol_buckets: dict[str, list[tuple]] = {}
@@ -350,16 +429,21 @@ def _rotate(entries: list, rng: random.Random) -> list:
     return entries[offset:] + entries[:offset]
 
 
-def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None):
+def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None,
+                           history: dict | None = None, now: datetime.datetime | None = None):
     """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B → C 档）。
 
     某组不足时，剩余名额按组优先级补位。
-    每组候选先按小时种子轮换再抽取：alive 已按延迟排序，轮换让每小时
-    被测的是不同切片（切片内仍按延迟优先），避免长期只测同一批节点。
+    组内先保「老兵」（见 is_veteran，按历史测通轮次、测活轮次排序），
+    余量再按小时种子轮换抽取：alive 已按延迟排序，轮换让每小时被测的
+    是不同切片（切片内仍按延迟优先），避免长期只测同一批新面孔。
     """
     if seed is None:
         seed = int(time.time() // 3600)
     rng = random.Random(seed)
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    history = history or {}
     # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B → C 档。
     groups: list[tuple[list[tuple], int]] = []
     fronted = [e for e in alive if cn_tier(e[0]) <= 1 and cdn_fronted(e[0])]
@@ -371,11 +455,19 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
     tcp_shortlist: list[str] = []
     leftovers: list[list[tuple]] = []
     for entries, quota in groups:
-        rotated = _rotate(entries, rng)
-        picked = _round_robin_by_protocol(rotated, quota)
+        veterans = [e for e in entries if is_veteran(history.get(history_key(e[0])), now)]
+        veterans.sort(key=lambda e: (-history[history_key(e[0])].get("p", 0),
+                                     -history[history_key(e[0])].get("a", 0)))
+        veteran_lines = {e[0] for e in veterans}
+        others = [e for e in entries if e[0] not in veteran_lines]
+        rotated = _rotate(others, rng)
+        picked_veterans = [e[0] for e in veterans[:quota]]
+        picked = picked_veterans + _round_robin_by_protocol(rotated, quota - len(picked_veterans))
         tcp_shortlist.extend(picked)
         picked_lines = set(picked)
-        leftovers.append([entry for entry in rotated if entry[0] not in picked_lines])
+        leftover_ordered = [e for e in veterans if e[0] not in picked_lines]
+        leftover_ordered += [entry for entry in rotated if entry[0] not in picked_lines]
+        leftovers.append(leftover_ordered)
     # 补位按组优先级进行，前组不足时由后组补满，反之亦然。
     for leftover in leftovers:
         if len(tcp_shortlist) >= SPEED_TCP_LIMIT:
@@ -485,7 +577,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          alive: list[tuple],
                          subscription_status: str = "preserved_previous",
                          speed_results: list[tuple] | None = None,
-                         selected: list[str] | None = None) -> None:
+                         selected: list[str] | None = None,
+                         history: dict | None = None) -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -550,8 +643,9 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "tcp_latency_ms": round(latency * 1000, 1) if latency is not None else None,
         })
 
+    report_now = datetime.datetime.now(datetime.timezone.utc)
     report = {
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at": report_now.isoformat(),
         "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
         "ranking": "cdn_fronted_then_cn_tier_then_measured_proxy_download_mbps_descending",
         "cn_tier_counts": dict(sorted(tier_counts.items())),
@@ -585,7 +679,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 if result.get("status") != "ok"
             ][:25],
         },
-        "note": "Mainland-China optimised subscription: Cloudflare-fronted and tier A/B nodes are preferred, tier C (SS etc.) is included under diversity caps - field tests from Shenzhen showed survival depends on how un-catalogued a node's service/IP range is, not on protocol alone. Subscription enforces per-service (max 2) and per-/24 (max 3) caps so no single provider dominates. Order is fronted first, then tier, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
+        "note": "Mainland-China optimised subscription: Cloudflare-fronted and tier A/B nodes are preferred, tier C (SS etc.) is included under diversity caps - field tests from Shenzhen showed survival depends on how un-catalogued a node's service/IP range is, not on protocol alone. Subscription enforces per-service (max 2) and per-/24 (max 3) caps so no single provider dominates. Selection also weights node longevity: a cross-round history (node_history, hash keys only) tracks how long each node has kept appearing and passing, and veterans (>=24h old, alive in >=6 rounds) get shortlist priority and rank ahead within their tier - a small stable subscription in the same pool field-tested far better than freshly picked nodes. Order is fronted first, then tier, then veteran status, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
@@ -614,7 +708,13 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "tier_counts": dict(sorted(selected_tiers.items())),
             "distinct_services": len({service_key(line) for line in selected}),
             "distinct_networks": len({network_key(get_endpoint(line)[1]) for line in selected}),
+            "veterans": sum(1 for line in selected
+                            if is_veteran((history or {}).get(history_key(line)), report_now)),
         }
+    if history is not None:
+        # 历史只存哈希键与计数/时间戳，不含地址或凭据；随报告提交回
+        # 仓库，供下一轮累积（工作流只提交本文件）。
+        report["node_history"] = history
     atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -820,6 +920,8 @@ def fetch_source(url: str) -> list[str]:
 
 
 def main():
+    run_now = datetime.datetime.now(datetime.timezone.utc)
+    history = load_node_history()
     # 1. 读取源列表
     sources = []
     if SOURCES.exists():
@@ -901,7 +1003,8 @@ def main():
                     udp_candidates.append(line)
 
     if not candidates:
-        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
+                             history=update_node_history(history, [], [], run_now))
         print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有可用候选节点，保留旧订阅。")
         return
@@ -917,7 +1020,8 @@ def main():
     print("-" * 46)
 
     if not alive and not udp_candidates:
-        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
+                             history=update_node_history(history, [], [], run_now))
         print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有可进行协议级测速的节点，保留旧订阅。")
         return
@@ -925,7 +1029,9 @@ def main():
     # 5. TCP 延迟只用于缩小候选范围；测速名单按档位配额选（见
     # select_speed_shortlist），订阅排序先档位、再实测 Mbps。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
-    tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates)
+    tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates, history=history, now=run_now)
+    veteran_picks = sum(1 for line in tcp_shortlist if is_veteran(history.get(history_key(line)), run_now))
+    print(f"本轮历史条目 {len(history)} 个，测速名单含老兵节点 {veteran_picks} 个")
     speed_shortlist = tcp_shortlist + udp_shortlist
 
     import shutil
@@ -935,7 +1041,8 @@ def main():
         from .speedtest import rank_by_speed
     binary = os.environ.get("SING_BOX_PATH") or shutil.which("sing-box")
     if not binary:
-        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous")
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
+                             history=update_node_history(history, [e[0] for e in alive], [], run_now))
         raise RuntimeError("sing-box binary unavailable; refusing to publish a latency-only ranking")
 
     print(f"开始真实代理隧道下载测速：TCP {len(tcp_shortlist)} 个，UDP {len(udp_shortlist)} 个")
@@ -956,13 +1063,19 @@ def main():
     stats["proxy_speed_failed_or_unsupported"] = len(speed_results) - len(successful_speed_nodes)
 
     if not successful_speed_nodes:
-        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous", speed_results)
+        write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous", speed_results,
+                             history=update_node_history(history, [e[0] for e in alive], [], run_now))
         print("没有节点通过实际代理下载测试，保留上一版订阅。")
         return
 
-    # 订阅排序：CF 前置优先（大陆连通率最高），再按档位、实测 Mbps；
+    # 本轮结果并入历史（订阅排序与报告的老兵判定都用更新后的历史）。
+    history = update_node_history(history, [e[0] for e in alive],
+                                  [uri for uri, _ in successful_speed_nodes], run_now)
+    # 订阅排序：CF 前置优先，再按档位、同档内老兵靠前、再实测 Mbps；
     # 然后按服务器去重，只留独立节点。
-    successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1, cn_tier(item[0]), -item[1]["download_mbps"]))
+    successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1, cn_tier(item[0]),
+                                                  0 if is_veteran(history.get(history_key(item[0])), run_now) else 1,
+                                                  -item[1]["download_mbps"]))
     ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
     if dropped_dupes:
         print(f"按服务器去重：丢弃同 host:端口 的重复节点 {dropped_dupes} 个，保留 {len(ranked_nodes)} 个独立节点")
@@ -979,7 +1092,7 @@ def main():
     # 6. 只发布已完成代理隧道下载测试的节点；订阅按档位、再按 Mbps 排序。
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected)
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     print(f"\n已生成真实测速节点: {len(selected)} 个")
