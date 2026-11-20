@@ -312,7 +312,16 @@ def rename_node(line: str, name: str) -> str:
     return base + "#" + urllib.parse.quote(name, safe="")
 
 
-def label_subscription(lines: list[str], egress_regions: dict | None = None) -> list[str]:
+EGRESS_TYPE_ZH = {
+    "residential": "住宅",
+    "datacenter": "机场",
+    "mobile": "移动",
+    "proxy": "代理",
+}
+
+
+def label_subscription(lines: list[str], egress_regions: dict | None = None,
+                       egress_types: dict | None = None) -> list[str]:
     """发布前统一命名：旗帜 + 中文地区 + 协议 + 同组序号。
 
     源站自带的名字多是广告或乱码（如 vless-1863464818），客户端根本
@@ -336,6 +345,10 @@ def label_subscription(lines: list[str], egress_regions: dict | None = None) -> 
         key = (region, display)
         counters[key] = counters.get(key, 0) + 1
         name = f"{REGION_FLAGS.get(region, '🌐')} {REGION_ZH.get(region, '未知地区')} {display} {counters[key]:02d}"
+        # 出口类型备注：住宅 IP 稀缺且常更耐封，与机场（机房）IP 分开标。
+        egress_type = (egress_types or {}).get(get_dedup_key(line))
+        if egress_type in EGRESS_TYPE_ZH:
+            name += f" · {EGRESS_TYPE_ZH[egress_type]}"
         labelled.append(rename_node(line, name))
     return labelled
 
@@ -1518,6 +1531,7 @@ def main():
         result.get("egress_ip") for _, result in successful_speed_nodes
     )
     egress_regions: dict[str, str] = {}
+    egress_types: dict[str, str] = {}
     egress_by_type: dict[str, int] = {}
     egress_checked = 0
     label_mismatch = 0
@@ -1530,6 +1544,7 @@ def main():
         if not info:
             continue
         egress_by_type[info["type"]] = egress_by_type.get(info["type"], 0) + 1
+        egress_types[get_dedup_key(uri)] = info["type"]
         if info["region"]:
             result["egress_region"] = info["region"]
             result["egress_type"] = info["type"]
@@ -1573,7 +1588,7 @@ def main():
         print(f"  #{rank} {fronted_mark}{'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
     # 6. 只发布已完成代理隧道下载测试的节点；发布名统一为中文地区标记。
-    content = base64.b64encode("\n".join(label_subscription(selected, egress_regions=egress_regions)).encode("utf-8")).decode("ascii")
+    content = base64.b64encode("\n".join(label_subscription(selected, egress_regions=egress_regions, egress_types=egress_types)).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
     write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats, egress_summary=egress_summary)
     print(f"质量报告已更新: {QUALITY_REPORT}")

@@ -485,6 +485,16 @@ class CnTierTests(unittest.TestCase):
         sent = post.call_args.kwargs["json"]
         self.assertNotIn("10.0.0.1", sent)
 
+    def test_label_subscription_marks_egress_type(self):
+        line = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@example.com:8388#node"
+        key = collector.get_dedup_key(line)
+        residential = collector.label_subscription([line], egress_types={key: "residential"})
+        self.assertIn("住宅", urllib.parse.unquote(residential[0].split("#", 1)[1]))
+        datacenter = collector.label_subscription([line], egress_types={key: "datacenter"})
+        self.assertIn("机场", urllib.parse.unquote(datacenter[0].split("#", 1)[1]))
+        plain = collector.label_subscription([line])
+        self.assertNotIn("住宅", urllib.parse.unquote(plain[0].split("#", 1)[1]))
+
     def test_label_subscription_prefers_egress_region(self):
         line = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@nz.example.com:8388#nz-node"
         key = collector.get_dedup_key(line)
