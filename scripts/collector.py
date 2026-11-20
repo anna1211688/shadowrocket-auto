@@ -19,6 +19,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
 PRIORITY_SOURCES = ROOT / "config" / "priority_sources.txt"
+DISCOVERY_CONFIG = ROOT / "config" / "discovery.json"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
@@ -630,6 +631,68 @@ def load_node_history() -> dict:
     return history if isinstance(history, dict) else {}
 
 
+# 发现源的状态同样保存在质量报告里跨轮累积（工作流只提交该文件）。
+DISCOVERED_PRUNE_DAYS = 7
+DISCOVERED_MAX_STORED = 50
+DISCOVERED_MAX_FETCH = 40
+DISCOVERED_MAX_EMPTY = 3
+
+
+def load_discovery_config() -> dict:
+    try:
+        config = json.loads(DISCOVERY_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def load_discovered_sources() -> dict:
+    """从上一轮质量报告读回发现源状态 {url: {f, l, ok, empty}}。"""
+    try:
+        report = json.loads(QUALITY_REPORT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    stored = report.get("discovered_sources")
+    return stored if isinstance(stored, dict) else {}
+
+
+def update_discovered_sources(stored: dict, fetch_results: dict, rediscovered: set,
+                              now: datetime.datetime) -> dict:
+    """累积发现源状态并修剪：连续 3 轮无产出或 7 天未见即淘汰。
+
+    发现到的订阅地址先过源白名单才会被抓取（见 main），存活下来的
+    升为常驻发现源每轮自动抓取，不必等渠道再次发现。
+    """
+    stamp = now.isoformat()
+    updated = {url: dict(entry) for url, entry in stored.items() if isinstance(entry, dict)}
+    for url in rediscovered:
+        entry = updated.setdefault(url, {"f": stamp, "l": stamp, "ok": 0, "empty": 0})
+        entry["l"] = stamp
+    for url, count in fetch_results.items():
+        entry = updated.setdefault(url, {"f": stamp, "l": stamp, "ok": 0, "empty": 0})
+        entry["l"] = stamp
+        if count > 0:
+            entry["ok"] = entry.get("ok", 0) + 1
+            entry["empty"] = 0
+        else:
+            entry["empty"] = entry.get("empty", 0) + 1
+    cutoff = now - datetime.timedelta(days=DISCOVERED_PRUNE_DAYS)
+    kept = {}
+    for url, entry in updated.items():
+        try:
+            last = datetime.datetime.fromisoformat(entry.get("l", ""))
+        except ValueError:
+            continue
+        if last < cutoff or entry.get("empty", 0) >= DISCOVERED_MAX_EMPTY:
+            continue
+        kept[url] = entry
+    if len(kept) > DISCOVERED_MAX_STORED:
+        kept = dict(
+            sorted(kept.items(), key=lambda item: -item[1].get("ok", 0))[:DISCOVERED_MAX_STORED]
+        )
+    return kept
+
+
 def update_node_history(history: dict, alive_lines, passed_lines, now: datetime.datetime) -> dict:
     """累积本轮结果并修剪：条目 {f:首见, l:最近见, a:测活轮次, p:测通轮次}。"""
     stamp = now.isoformat()
@@ -849,7 +912,9 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          subscription_status: str = "preserved_previous",
                          speed_results: list[tuple] | None = None,
                          selected: list[str] | None = None,
-                         history: dict | None = None) -> None:
+                         history: dict | None = None,
+                         discovered: dict | None = None,
+                         discovery_stats: dict | None = None) -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -986,6 +1051,11 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
         # 历史只存哈希键与计数/时间戳，不含地址或凭据；随报告提交回
         # 仓库，供下一轮累积（工作流只提交本文件）。
         report["node_history"] = history
+    if discovered is not None:
+        # 发现源是公开订阅地址（非凭据），可明文保存以便跨轮累积。
+        report["discovered_sources"] = discovered
+    if discovery_stats is not None:
+        report["discovery"] = discovery_stats
     atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -1212,18 +1282,59 @@ def main():
 
     print(f"共 {len(sources)} 个订阅源")
 
+    # 1b. 源发现：从公开渠道找新订阅地址与散装节点；发现到的订阅地址
+    # 仍须过源白名单才抓取，存活下来的发现源跨轮保存在质量报告里。
+    discovered_state = load_discovered_sources()
+    discovery_stats: dict = {}
+    discovered_uris: list[str] = []
+    fetch_urls: list[str] = []
+    allowed_urls: list[str] = []
+    discovery_config = load_discovery_config()
+    if discovery_config.get("enable"):
+        try:
+            from discovery import run_discovery  # python scripts/collector.py
+        except ImportError:  # 作为包导入时
+            from .discovery import run_discovery
+        found = run_discovery(discovery_config)
+        discovered_uris = found["uris"]
+        allowed_urls = [url for url in found["urls"] if is_allowed_source_url(url)]
+        stored_urls = sorted(
+            discovered_state, key=lambda url: -discovered_state[url].get("ok", 0)
+        )
+        fetch_urls = list(dict.fromkeys(stored_urls + allowed_urls))[:DISCOVERED_MAX_FETCH]
+        sources.extend(fetch_urls)
+        discovery_stats = {
+            "channels": found["channels"],
+            "urls_found": len(found["urls"]),
+            "urls_allowlisted": len(allowed_urls),
+            "uris_found": len(discovered_uris),
+            "sources_fetched": len(fetch_urls),
+        }
+        print(f"源发现: {discovery_stats}")
+
     # 2. 拉取所有节点（带重试）；优先源单独收集，不受总量截断影响。
     priority_urls = load_priority_sources()
     raw_nodes: list[str] = []
     priority_raw_nodes: list[str] = []
+    fetched_counts: dict[str, int] = {}
     for offset in range(0, len(sources), MAX_SOURCE_WORKERS):
         batch = sources[offset:offset + MAX_SOURCE_WORKERS]
         with ThreadPoolExecutor(max_workers=MAX_SOURCE_WORKERS) as source_executor:
             for source_url, nodes in zip(batch, source_executor.map(fetch_source, batch)):
+                fetched_counts[source_url] = len(nodes)
                 if source_url in priority_urls:
                     priority_raw_nodes.extend(nodes)
                 else:
                     raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
+    if discovered_uris:
+        raw_nodes.extend(discovered_uris)
+    if discovery_config.get("enable"):
+        discovered_state = update_discovered_sources(
+            discovered_state,
+            {url: fetched_counts.get(url, 0) for url in fetch_urls},
+            set(allowed_urls),
+            run_now,
+        )
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重；优先候选不受上限约束。
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0, "udp_unverified": 0}
@@ -1263,7 +1374,8 @@ def main():
 
     if not candidates:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
-                             history=update_node_history(history, [], [], run_now))
+                             history=update_node_history(history, [], [], run_now),
+                             discovered=discovered_state, discovery_stats=discovery_stats)
         print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有可用候选节点，保留旧订阅。")
         return
@@ -1280,7 +1392,8 @@ def main():
 
     if not alive and not udp_candidates:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
-                             history=update_node_history(history, [], [], run_now))
+                             history=update_node_history(history, [], [], run_now),
+                             discovered=discovered_state, discovery_stats=discovery_stats)
         print(f"质量报告已更新: {QUALITY_REPORT}")
         print("没有可进行协议级测速的节点，保留旧订阅。")
         return
@@ -1303,7 +1416,8 @@ def main():
     binary = os.environ.get("SING_BOX_PATH") or shutil.which("sing-box")
     if not binary:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous",
-                             history=update_node_history(history, [e[0] for e in alive], [], run_now))
+                             history=update_node_history(history, [e[0] for e in alive], [], run_now),
+                             discovered=discovered_state, discovery_stats=discovery_stats)
         raise RuntimeError("sing-box binary unavailable; refusing to publish a latency-only ranking")
 
     print(f"开始真实代理隧道下载测速：TCP {len(tcp_shortlist)} 个，UDP {len(udp_shortlist)} 个")
@@ -1325,7 +1439,8 @@ def main():
 
     if not successful_speed_nodes:
         write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "preserved_previous", speed_results,
-                             history=update_node_history(history, [e[0] for e in alive], [], run_now))
+                             history=update_node_history(history, [e[0] for e in alive], [], run_now),
+                             discovered=discovered_state, discovery_stats=discovery_stats)
         print("没有节点通过实际代理下载测试，保留上一版订阅。")
         return
 
@@ -1353,7 +1468,7 @@ def main():
     # 6. 只发布已完成代理隧道下载测试的节点；发布名统一为中文地区标记。
     content = base64.b64encode("\n".join(label_subscription(selected)).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history)
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     print(f"\n已生成真实测速节点: {len(selected)} 个")
