@@ -305,9 +305,9 @@ class CnTierTests(unittest.TestCase):
 
     def test_shortlist_respects_tier_quotas(self):
         alive = []
-        for i in range(120):
+        for i in range(150):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
-        for i in range(50):
+        for i in range(70):
             alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
         ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         for i in range(50):
@@ -315,13 +315,13 @@ class CnTierTests(unittest.TestCase):
         udp = [f"hy2://secret@u{i}.example:443" for i in range(25)]
         tcp, udp_short = collector.select_speed_shortlist(alive, udp, seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
-        self.assertEqual(len(tcp), 180)
-        self.assertEqual(tiers.count(0), 100)
-        self.assertEqual(tiers.count(1), 40)
-        self.assertEqual(tiers.count(2), 40)
-        self.assertEqual(len(udp_short), 20)
+        self.assertEqual(len(tcp), 200)
+        self.assertEqual(tiers.count(0), 140)
+        self.assertEqual(tiers.count(1), 60)
+        self.assertEqual(tiers.count(2), 0)
+        self.assertEqual(len(udp_short), 0)
 
-    def test_shortlist_backfills_from_lower_tiers(self):
+    def test_shortlist_never_backfills_from_excluded_tier(self):
         alive = []
         for i in range(5):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
@@ -330,9 +330,21 @@ class CnTierTests(unittest.TestCase):
             alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
         tcp, _ = collector.select_speed_shortlist(alive, [], seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
-        self.assertEqual(len(tcp), 105)
+        self.assertEqual(len(tcp), 5)
         self.assertEqual(tiers.count(0), 5)
-        self.assertEqual(tiers.count(2), 100)
+        self.assertEqual(tiers.count(2), 0)
+
+    def test_shortlist_backfills_between_included_tiers(self):
+        alive = []
+        for i in range(10):
+            alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
+        for i in range(150):
+            alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
+        tcp, _ = collector.select_speed_shortlist(alive, [], seed=1)
+        tiers = [collector.cn_tier(line) for line in tcp]
+        self.assertEqual(len(tcp), 160)
+        self.assertEqual(tiers.count(0), 10)
+        self.assertEqual(tiers.count(1), 150)
 
     def test_shortlist_rotates_with_seed(self):
         alive = [
@@ -343,7 +355,7 @@ class CnTierTests(unittest.TestCase):
         tcp1_again, _ = collector.select_speed_shortlist(alive, [], seed=1)
         tcp2, _ = collector.select_speed_shortlist(alive, [], seed=2)
         self.assertEqual(tcp1, tcp1_again)
-        self.assertEqual(len(tcp1), 180)
+        self.assertEqual(len(tcp1), 200)
         self.assertNotEqual(set(tcp1), set(tcp2))
 
     def test_ss_and_hy2_are_tier_c(self):

@@ -276,16 +276,16 @@ def cn_tier(line: str) -> int:
     return 2
 
 
-# 测速名额按档位分配：A 档多给，但保留 B/C 保底名额。实测记录（2026-11-20）：
-# 配额制首轮 A/B 通过数为 0，但随后 12 小时共 13 轮里 A/B 每轮都有通过，
-# 订阅稳定在 7–16 个、含 3–5 个 A 档——A/B 不是全灭，而是通过率只有约
-# 5–10%，瓶颈在测速吞吐：串行测速一轮只能测 80 个。故配额扩到
-# A100/B40/C40 + UDP20（共 200），配合 speedtest 的 4 路并行在同一
-# 10 分钟预算内完成；且每档名单按小时种子轮换切片，避免每小时重复测
-# 同一批最低延迟节点、让上千个 A 档候选都有被测到的机会。
-TIER_TCP_QUOTAS = {0: 100, 1: 40, 2: 40}
-SPEED_TCP_LIMIT = 180
-SPEED_UDP_LIMIT = 20
+# 大陆优化专用模式（2026-11-20 用户定）：订阅只收 A/B 档节点
+# （VLESS Reality、443 TLS、其他 TLS），C 档（SS、明文、hy2 等 UDP）
+# 对大陆客户端基本无用，不再占用测速名额、也不进订阅。
+# 实测记录：A/B 通过率约 5–10%，故 200 个并行测速名额全给 A/B
+# （A140/B60），每轮预期产出约 10 个大陆优化节点；某轮若 A/B 全部
+# 未通过，沿用「保留上一版订阅」逻辑，不会把订阅清空。
+# 每档名单按小时种子轮换切片，让上千个 A 档候选都有被测到的机会。
+TIER_TCP_QUOTAS = {0: 140, 1: 60, 2: 0}
+SPEED_TCP_LIMIT = 200
+SPEED_UDP_LIMIT = 0
 
 
 def _round_robin_by_protocol(entries: list[tuple], limit: int) -> list[str]:
@@ -333,7 +333,11 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
         tcp_shortlist.extend(picked)
         picked_lines = set(picked)
         leftovers[tier] = [entry for entry in entries if entry[0] not in picked_lines]
+    # 补位只在配额 > 0 的档位之间进行：配额为 0 的档位（如大陆优化
+    # 模式下的 C 档）永远不进测速名单。
     for tier in (0, 1, 2):
+        if TIER_TCP_QUOTAS[tier] <= 0:
+            continue
         if len(tcp_shortlist) >= SPEED_TCP_LIMIT:
             break
         tcp_shortlist.extend(
@@ -445,7 +449,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 if result.get("status") != "ok"
             ][:25],
         },
-        "note": "Subscription order prioritises mainland-China reachability tiers (VLESS Reality and TLS on port 443 first), then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
+        "note": "Mainland-China optimised subscription: only tier A/B nodes (VLESS Reality, TLS on port 443, other TLS) are speed-tested and published; tier C (SS, plain, UDP) is excluded. Order is tier first, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
