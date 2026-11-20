@@ -1,6 +1,7 @@
 import base64
 import json
 import unittest
+import unittest.mock
 import urllib.error
 
 from scripts import speedtest
@@ -115,6 +116,26 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(diagnostic["http_status"], 403)
         self.assertEqual(diagnostic["reason"], "http_error")
         self.assertNotIn("secret", str(diagnostic))
+
+
+class ParallelRankTests(unittest.TestCase):
+    def test_rank_by_speed_parallel_covers_all_nodes(self):
+        nodes = [
+            "vless://12345678-1234-1234-1234-123456789012@example.com:443?encryption=none&security=reality&sni=cdn.example&fp=chrome&pbk=publickey&sid=abcd&type=ws&host=cdn.example&path=%2Fedge#test",
+            "trojan://secret@example.com:443#test",
+            "hy2://secret@example.com:443#test",
+        ]
+        calls = []
+
+        def fake_measure(uri, binary):
+            calls.append(uri)
+            return {"status": "ok", "stage": "complete", "download_mbps": 10.0, "samples_mbps": [10.0]}
+
+        with unittest.mock.patch.object(speedtest, "measure_node", fake_measure):
+            successful, results = speedtest.rank_by_speed(nodes, "sing-box", workers=3)
+        self.assertEqual(sorted(calls), sorted(nodes))
+        self.assertEqual(len(results), 3)
+        self.assertEqual(len(successful), 3)
 
 
 if __name__ == "__main__":

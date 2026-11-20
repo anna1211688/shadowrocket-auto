@@ -276,12 +276,16 @@ def cn_tier(line: str) -> int:
     return 2
 
 
-# 测速名额按档位分配：A 档多给，但保留 B/C 保底名额。实测教训（2026-11-20）：
-# A 档公开节点真实隧道通过率极低，名额全押 A 档时订阅只剩 3 个 C 档节点；
-# 反过来纯按速度选又全是大陆基本连不上的 SS。配额制是两者的折中。
-TIER_TCP_QUOTAS = {0: 40, 1: 16, 2: 16}
-SPEED_TCP_LIMIT = 72
-SPEED_UDP_LIMIT = 8
+# 测速名额按档位分配：A 档多给，但保留 B/C 保底名额。实测记录（2026-11-20）：
+# 配额制首轮 A/B 通过数为 0，但随后 12 小时共 13 轮里 A/B 每轮都有通过，
+# 订阅稳定在 7–16 个、含 3–5 个 A 档——A/B 不是全灭，而是通过率只有约
+# 5–10%，瓶颈在测速吞吐：串行测速一轮只能测 80 个。故配额扩到
+# A100/B40/C40 + UDP20（共 200），配合 speedtest 的 4 路并行在同一
+# 10 分钟预算内完成；且每档名单按小时种子轮换切片，避免每小时重复测
+# 同一批最低延迟节点、让上千个 A 档候选都有被测到的机会。
+TIER_TCP_QUOTAS = {0: 100, 1: 40, 2: 40}
+SPEED_TCP_LIMIT = 180
+SPEED_UDP_LIMIT = 20
 
 
 def _round_robin_by_protocol(entries: list[tuple], limit: int) -> list[str]:
@@ -301,15 +305,30 @@ def _round_robin_by_protocol(entries: list[tuple], limit: int) -> list[str]:
     return selected
 
 
-def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str]):
-    """按档位配额选 TCP 测速名单；某档不足时，剩余名额按 A→B→C 顺序补位。"""
+def _rotate(entries: list, rng: random.Random) -> list:
+    """按随机偏移旋转列表：切片随种子变化，切片内相对顺序不变。"""
+    if len(entries) < 2:
+        return list(entries)
+    offset = rng.randrange(len(entries))
+    return entries[offset:] + entries[:offset]
+
+
+def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None):
+    """按档位配额选 TCP 测速名单；某档不足时，剩余名额按 A→B→C 顺序补位。
+
+    每档候选先按小时种子轮换再抽取：alive 已按延迟排序，轮换让每小时
+    被测的是不同切片（切片内仍按延迟优先），避免长期只测同一批节点。
+    """
+    if seed is None:
+        seed = int(time.time() // 3600)
+    rng = random.Random(seed)
     tier_entries: dict[int, list[tuple]] = {}
     for entry in alive:
         tier_entries.setdefault(cn_tier(entry[0]), []).append(entry)
     tcp_shortlist: list[str] = []
     leftovers: dict[int, list[tuple]] = {}
     for tier in (0, 1, 2):
-        entries = tier_entries.get(tier, [])
+        entries = _rotate(tier_entries.get(tier, []), rng)
         picked = _round_robin_by_protocol(entries, TIER_TCP_QUOTAS[tier])
         tcp_shortlist.extend(picked)
         picked_lines = set(picked)
@@ -320,7 +339,7 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str]):
         tcp_shortlist.extend(
             _round_robin_by_protocol(leftovers[tier], SPEED_TCP_LIMIT - len(tcp_shortlist))
         )
-    return tcp_shortlist, udp_candidates[:SPEED_UDP_LIMIT]
+    return tcp_shortlist, _rotate(udp_candidates, rng)[:SPEED_UDP_LIMIT]
 
 
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,

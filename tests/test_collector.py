@@ -305,21 +305,21 @@ class CnTierTests(unittest.TestCase):
 
     def test_shortlist_respects_tier_quotas(self):
         alive = []
-        for i in range(50):
+        for i in range(120):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
-        for i in range(20):
+        for i in range(50):
             alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
         ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
-        for i in range(20):
+        for i in range(50):
             alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
-        udp = [f"hy2://secret@u{i}.example:443" for i in range(10)]
-        tcp, udp_short = collector.select_speed_shortlist(alive, udp)
+        udp = [f"hy2://secret@u{i}.example:443" for i in range(25)]
+        tcp, udp_short = collector.select_speed_shortlist(alive, udp, seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
-        self.assertEqual(len(tcp), 72)
-        self.assertEqual(tiers.count(0), 40)
-        self.assertEqual(tiers.count(1), 16)
-        self.assertEqual(tiers.count(2), 16)
-        self.assertEqual(len(udp_short), 8)
+        self.assertEqual(len(tcp), 180)
+        self.assertEqual(tiers.count(0), 100)
+        self.assertEqual(tiers.count(1), 40)
+        self.assertEqual(tiers.count(2), 40)
+        self.assertEqual(len(udp_short), 20)
 
     def test_shortlist_backfills_from_lower_tiers(self):
         alive = []
@@ -328,11 +328,23 @@ class CnTierTests(unittest.TestCase):
         ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         for i in range(100):
             alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
-        tcp, _ = collector.select_speed_shortlist(alive, [])
+        tcp, _ = collector.select_speed_shortlist(alive, [], seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
-        self.assertEqual(len(tcp), 72)
+        self.assertEqual(len(tcp), 105)
         self.assertEqual(tiers.count(0), 5)
-        self.assertEqual(tiers.count(2), 67)
+        self.assertEqual(tiers.count(2), 100)
+
+    def test_shortlist_rotates_with_seed(self):
+        alive = [
+            self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless")
+            for i in range(300)
+        ]
+        tcp1, _ = collector.select_speed_shortlist(alive, [], seed=1)
+        tcp1_again, _ = collector.select_speed_shortlist(alive, [], seed=1)
+        tcp2, _ = collector.select_speed_shortlist(alive, [], seed=2)
+        self.assertEqual(tcp1, tcp1_again)
+        self.assertEqual(len(tcp1), 180)
+        self.assertNotEqual(set(tcp1), set(tcp2))
 
     def test_ss_and_hy2_are_tier_c(self):
         userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")

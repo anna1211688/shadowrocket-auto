@@ -12,6 +12,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 try:
@@ -19,7 +20,12 @@ try:
 except ImportError:  # direct execution from scripts/collector.py
     import collector
 
-SPEED_TEST_LIMIT = 80
+SPEED_TEST_LIMIT = 200
+# 并行测速路数：每个节点各自起一个 sing-box 进程，互不干扰；并行让
+# 一轮在同样的 10 分钟预算内测约 200 个节点（串行时只能测约 80 个）。
+# 代价是同一出口带宽被分摊，Mbps 数值比串行略低——排名只作粗排，
+# 通过/不通过的判定不受影响。
+SPEED_TEST_WORKERS = 4
 SPEED_TEST_TOTAL_SECONDS = 600
 SPEED_TEST_BYTES = 262144
 SPEED_TEST_SAMPLES = 2
@@ -478,27 +484,53 @@ def _balanced_speed_shortlist(nodes, limit):
     return selected, unsupported
 
 
-def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT):
-    """Speed-test a bounded, protocol-balanced shortlist; return URI/result pairs."""
+def _report_result(result):
+    if result.get("status") == "ok":
+        print(f"[实测测速] {result['download_mbps']:.2f} Mbps")
+    else:
+        print(
+            f"[测速失败] status={result.get('status')} "
+            f"stage={result.get('stage', 'unknown')} "
+            f"reason={result.get('reason', 'n/a')} "
+            f"error_type={result.get('error_type', 'n/a')} "
+            f"http_status={result.get('http_status', 'n/a')} "
+            f"errno={result.get('errno', 'n/a')}"
+        )
+
+
+def rank_by_speed(nodes, binary, limit=SPEED_TEST_LIMIT, workers=SPEED_TEST_WORKERS):
+    """Speed-test a bounded, protocol-balanced shortlist; return URI/result pairs.
+
+    Nodes are measured in parallel (each spawns its own sing-box process);
+    nodes not started before the round deadline are reported skipped_budget.
+    """
     shortlist, results = _balanced_speed_shortlist(nodes, limit)
+    results = list(results)
     deadline = time.monotonic() + SPEED_TEST_TOTAL_SECONDS
-    for uri in shortlist:
-        if time.monotonic() >= deadline:
-            results.append((uri, {"status": "skipped_budget", "stage": "scheduler", "reason": "round_budget_exhausted"}))
-            continue
-        result = measure_node(uri, binary)
-        results.append((uri, result))
-        if result.get("status") == "ok":
-            print(f"[实测测速] {result['download_mbps']:.2f} Mbps")
-        else:
-            print(
-                f"[测速失败] status={result.get('status')} "
-                f"stage={result.get('stage', 'unknown')} "
-                f"reason={result.get('reason', 'n/a')} "
-                f"error_type={result.get('error_type', 'n/a')} "
-                f"http_status={result.get('http_status', 'n/a')} "
-                f"errno={result.get('errno', 'n/a')}"
-            )
+    queue = list(shortlist)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        in_flight = {}
+
+        def submit(uri):
+            in_flight[pool.submit(measure_node, uri, binary)] = uri
+
+        while queue and len(in_flight) < max(1, workers) and time.monotonic() < deadline:
+            submit(queue.pop(0))
+        while in_flight:
+            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                uri = in_flight.pop(future)
+                try:
+                    result = future.result()
+                except Exception as exc:  # measure_node should not raise; never lose a slot
+                    result = {"status": "download_failed", "stage": "scheduler",
+                              "reason": type(exc).__name__}
+                results.append((uri, result))
+                _report_result(result)
+            while queue and len(in_flight) < max(1, workers) and time.monotonic() < deadline:
+                submit(queue.pop(0))
+    for uri in queue:
+        results.append((uri, {"status": "skipped_budget", "stage": "scheduler", "reason": "round_budget_exhausted"}))
     successful = [(uri, result) for uri, result in results if result.get("status") == "ok"]
     successful.sort(key=lambda item: item[1]["download_mbps"], reverse=True)
     return successful, results
