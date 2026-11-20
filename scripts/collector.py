@@ -340,11 +340,25 @@ def get_node_label(line: str) -> str:
     return f"{label} {host or ''}".lower()
 
 
+# 裸国家代码按词元匹配（如「DE SS-34 | free-nodes」）；排除与英文
+# 单词/编号写法冲突的代码：IN/IT 是常用词、NO 常见于「No.1」编号、
+# AT 是介词，裸代码出现时歧义太大，宁可标未知。
+_CODE_TOKEN_EXCLUDE = {"IN", "IT", "NO", "AT"}
+_CODE_TOKEN_ALIASES = {"uk": "GB", "usa": "US"}
+
+
 def infer_region(line: str) -> str:
     """根据节点备注/主机名推测地区；无法判断时返回 OTHER，不调用外部地理定位服务。"""
     label = get_node_label(line)
     for region, keywords in REGION_KEYWORDS.items():
         if any(keyword.lower() in label for keyword in keywords):
+            return region
+    tokens = set(re.split(r"[^a-z]+", label))
+    for token, region in _CODE_TOKEN_ALIASES.items():
+        if token in tokens:
+            return region
+    for region in REGION_KEYWORDS:
+        if region not in _CODE_TOKEN_EXCLUDE and region.lower() in tokens:
             return region
     return "OTHER"
 

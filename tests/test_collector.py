@@ -404,6 +404,13 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(collector.infer_region("vless://u@h.example:443#India Mumbai"), "IN")
         self.assertEqual(collector.infer_region("vless://u@h.example:443#random-name"), "OTHER")
 
+    def test_infer_region_bare_country_codes(self):
+        self.assertEqual(collector.infer_region("ss://eA@h.example:8388#DE SS-34 | free-nodes"), "DE")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#US VLESS-01 | free-nodes"), "US")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#UK London relay"), "GB")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#No.1 fast node"), "OTHER")
+        self.assertEqual(collector.infer_region("ss://eA@h.example:8388#NZ SS-02"), "NZ")
+
     def test_rename_node_keeps_identity(self):
         line = "trojan://pw@h.example:443#old-name"
         renamed = collector.rename_node(line, "🇭🇰 香港 TROJAN 01")
