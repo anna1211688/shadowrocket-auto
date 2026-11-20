@@ -314,11 +314,11 @@ class CnTierTests(unittest.TestCase):
 
     def test_shortlist_respects_tier_quotas(self):
         alive = []
-        for i in range(130):
+        for i in range(110):
             alive.append(self._entry(f"vless://uuid@104.16.10.{i % 250 + 1}:443?security=tls", "vless"))
-        for i in range(60):
+        for i in range(50):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
-        for i in range(40):
+        for i in range(30):
             alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
         ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         for i in range(50):
@@ -327,13 +327,13 @@ class CnTierTests(unittest.TestCase):
         tcp, udp_short = collector.select_speed_shortlist(alive, udp, seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
         self.assertEqual(len(tcp), 200)
-        self.assertEqual(sum(1 for line in tcp if collector.cdn_fronted(line)), 120)
-        self.assertEqual(tiers.count(0), 170)
-        self.assertEqual(tiers.count(1), 30)
-        self.assertEqual(tiers.count(2), 0)
+        self.assertEqual(sum(1 for line in tcp if collector.cdn_fronted(line)), 100)
+        self.assertEqual(tiers.count(0), 140)
+        self.assertEqual(tiers.count(1), 20)
+        self.assertEqual(tiers.count(2), 40)
         self.assertEqual(len(udp_short), 0)
 
-    def test_shortlist_never_backfills_from_excluded_tier(self):
+    def test_shortlist_backfills_from_c_when_ab_short(self):
         alive = []
         for i in range(5):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
@@ -342,9 +342,37 @@ class CnTierTests(unittest.TestCase):
             alive.append(self._entry(f"ss://{ss_userinfo}@c{i}.example:8388", "ss"))
         tcp, _ = collector.select_speed_shortlist(alive, [], seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
-        self.assertEqual(len(tcp), 5)
+        self.assertEqual(len(tcp), 105)
         self.assertEqual(tiers.count(0), 5)
-        self.assertEqual(tiers.count(2), 0)
+        self.assertEqual(tiers.count(2), 100)
+
+    def test_dedupe_for_subscription_caps_same_fronted_service(self):
+        nodes = [
+            (f"vless://same-uuid@104.16.10.{i}:443?security=tls&host=origin.example&sni=origin.example&type=ws", {"download_mbps": 9.0})
+            for i in range(1, 6)
+        ]
+        kept, dropped = collector.dedupe_for_subscription(nodes)
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(dropped, 3)
+
+    def test_dedupe_for_subscription_caps_same_network(self):
+        nodes = [
+            (f"trojan://pass{i}@10.9.8.{i}:443", {"download_mbps": 9.0})
+            for i in range(1, 7)
+        ]
+        kept, dropped = collector.dedupe_for_subscription(nodes)
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(dropped, 3)
+
+    def test_dedupe_for_subscription_keeps_distinct_sources(self):
+        nodes = [
+            ("trojan://pass1@10.1.1.1:443", {"download_mbps": 9.0}),
+            ("vless://uuid-2@20.2.2.2:443?security=reality&pbk=k", {"download_mbps": 8.0}),
+            ("ss://" + base64.urlsafe_b64encode(b"aes-128-gcm:pw").decode().rstrip("=") + "@30.3.3.3:8388", {"download_mbps": 7.0}),
+        ]
+        kept, dropped = collector.dedupe_for_subscription(nodes)
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(dropped, 0)
 
     def test_shortlist_backfills_between_included_tiers(self):
         alive = []

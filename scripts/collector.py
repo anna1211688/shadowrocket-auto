@@ -310,15 +310,17 @@ def cdn_fronted(line: str) -> bool:
     return any(address in network for network in _CF_IPV4_NETWORKS)
 
 
-# 大陆优化专用模式（2026-11-20 用户定）：订阅只收 A/B 档节点
-# （VLESS Reality、443 TLS、其他 TLS），C 档（SS、明文、hy2 等 UDP）
-# 对大陆客户端基本无用，不再占用测速名额、也不进订阅。
-# 在 A/B 之内再分优先级：Cloudflare 前置节点（池中约 700+ 个 A/B
-# 候选）单列一组拿 120 个名额，直连 A 档 50、B 档 30；订阅排序同样
-# 前置优先。某轮若全部未通过，沿用「保留上一版订阅」逻辑。
+# 大陆优化模式（2026-11-20 迭代）：测速分组按优先级——CF 前置 A/B
+# 100、直连 A 40、直连 B 20、C 档（SS 等）40。C 档回放的原因是深圳
+# 实测：唯一连上的恰是冷门 IP 段上的普通 SS，而被寄予厚望的
+# Reality/CF 前置若出自已被编目的服务/IP 段照样全灭——决定生死的是
+# 「这家服务、这个 IP 段有没有被收录」，不是协议本身。故订阅端再加
+# 两道多样性闸门（见 dedupe_for_subscription）：按服务去重、按 /24
+# 网段限额，逼订阅分散到几十家不同来源，靠分散存活而非押注单一
+# 类型。某轮若全部未通过，沿用「保留上一版订阅」逻辑。
 # 每组名单按小时种子轮换切片，让候选都有被测到的机会。
-FRONTED_TCP_QUOTA = 120
-TIER_TCP_QUOTAS = {0: 50, 1: 30, 2: 0}
+FRONTED_TCP_QUOTA = 100
+TIER_TCP_QUOTAS = {0: 40, 1: 20, 2: 40}
 SPEED_TCP_LIMIT = 200
 SPEED_UDP_LIMIT = 0
 
@@ -349,22 +351,23 @@ def _rotate(entries: list, rng: random.Random) -> list:
 
 
 def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None):
-    """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B）。
+    """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B → C 档）。
 
-    某组不足时，剩余名额按组优先级补位；C 档不在任何组内。
+    某组不足时，剩余名额按组优先级补位。
     每组候选先按小时种子轮换再抽取：alive 已按延迟排序，轮换让每小时
     被测的是不同切片（切片内仍按延迟优先），避免长期只测同一批节点。
     """
     if seed is None:
         seed = int(time.time() // 3600)
     rng = random.Random(seed)
-    # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B。
-    # C 档不进任何组，永远不测速。
+    # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B → C 档。
     groups: list[tuple[list[tuple], int]] = []
     fronted = [e for e in alive if cn_tier(e[0]) <= 1 and cdn_fronted(e[0])]
     direct_a = [e for e in alive if cn_tier(e[0]) == 0 and not cdn_fronted(e[0])]
     direct_b = [e for e in alive if cn_tier(e[0]) == 1 and not cdn_fronted(e[0])]
-    groups = [(fronted, FRONTED_TCP_QUOTA), (direct_a, TIER_TCP_QUOTAS[0]), (direct_b, TIER_TCP_QUOTAS[1])]
+    tier_c = [e for e in alive if cn_tier(e[0]) == 2 and not cdn_fronted(e[0])]
+    groups = [(fronted, FRONTED_TCP_QUOTA), (direct_a, TIER_TCP_QUOTAS[0]),
+              (direct_b, TIER_TCP_QUOTAS[1]), (tier_c, TIER_TCP_QUOTAS[2])]
     tcp_shortlist: list[str] = []
     leftovers: list[list[tuple]] = []
     for entries, quota in groups:
@@ -400,6 +403,80 @@ def dedupe_by_endpoint(nodes: list[tuple]) -> list[tuple]:
             dropped += 1
             continue
         seen.add(key)
+        kept.append((uri, result))
+    return kept, dropped
+
+
+def service_key(line: str) -> tuple:
+    """识别节点背后的「服务」：同一服务的多个入口应视为一个来源。
+
+    前置节点用 (协议, 凭据, 源站域名, 端口)：CF 边缘 IP 只是门牌，
+    同一 UUID+源站换多少个 CF IP 都是同一家（实测一例：8 个 CF IP
+    实为同一节点）。直连节点再带上服务器地址，剩下的同服务多 IP
+    由 network_key 的网段限额兜底。无凭据可取时退回端点键。
+    """
+    protocol, host, port = get_endpoint(line)
+    credential = ""
+    origin = ""
+    if protocol == "vmess":
+        try:
+            raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                credential = str(data.get("id", ""))
+                origin = str(data.get("host") or data.get("sni") or "")
+        except (ValueError, TypeError):
+            pass
+    elif protocol in ("vless", "trojan", "ss", "hysteria2", "hy2", "tuic"):
+        parts = urllib.parse.urlsplit(line)
+        credential = parts.username or ""
+        if protocol in ("vless", "trojan"):
+            query = dict(urllib.parse.parse_qsl(parts.query))
+            origin = query.get("host") or query.get("sni") or ""
+    if credential:
+        if cdn_fronted(line):
+            return (protocol, credential, origin.lower(), port)
+        return (protocol, credential, origin.lower(), str(host).lower(), port)
+    return (protocol, str(host).lower(), port)
+
+
+def network_key(host: str) -> tuple:
+    """节点端点所在的网段：IPv4 按 /24、IPv6 按 /48、域名按自身。"""
+    name = str(host).lower()
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return ("host", name)
+    if isinstance(address, ipaddress.IPv4Address):
+        return ("net", str(ipaddress.ip_network(f"{name}/24", strict=False)))
+    return ("net", str(ipaddress.ip_network(f"{name}/48", strict=False)))
+
+
+MAX_PER_SERVICE = 2
+MAX_PER_NETWORK = 3
+
+
+def dedupe_for_subscription(nodes: list[tuple]) -> tuple[list[tuple], int]:
+    """多样性闸门：同一服务最多留 MAX_PER_SERVICE 个入口，同一网段
+    最多留 MAX_PER_NETWORK 个节点。输入须已按期望顺序排好。
+
+    依据 2026-11-20 深圳实测：订阅的死活取决于来源是否分散——曾有
+    一轮 33 个节点实际只来自个位数服务/网段，被编目的那几家一倒
+    就是整表超时。分散到几十家后，个别来源被封不影响其余。
+    """
+    service_counts: dict[tuple, int] = {}
+    network_counts: dict[tuple, int] = {}
+    kept: list[tuple] = []
+    dropped = 0
+    for uri, result in nodes:
+        skey = service_key(uri)
+        _, host, _ = get_endpoint(uri)
+        nkey = network_key(host)
+        if service_counts.get(skey, 0) >= MAX_PER_SERVICE or network_counts.get(nkey, 0) >= MAX_PER_NETWORK:
+            dropped += 1
+            continue
+        service_counts[skey] = service_counts.get(skey, 0) + 1
+        network_counts[nkey] = network_counts.get(nkey, 0) + 1
         kept.append((uri, result))
     return kept, dropped
 
@@ -508,7 +585,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 if result.get("status") != "ok"
             ][:25],
         },
-        "note": "Mainland-China optimised subscription: only tier A/B nodes (VLESS Reality, TLS on port 443, other TLS) are speed-tested and published; tier C (SS, plain, UDP) is excluded. Cloudflare-fronted nodes rank first (their endpoint IPs are rarely blocked from mainland China), then tier, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
+        "note": "Mainland-China optimised subscription: Cloudflare-fronted and tier A/B nodes are preferred, tier C (SS etc.) is included under diversity caps - field tests from Shenzhen showed survival depends on how un-catalogued a node's service/IP range is, not on protocol alone. Subscription enforces per-service (max 2) and per-/24 (max 3) caps so no single provider dominates. Order is fronted first, then tier, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
@@ -535,6 +612,8 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "nodes": len(selected),
             "cdn_fronted": sum(1 for line in selected if cdn_fronted(line)),
             "tier_counts": dict(sorted(selected_tiers.items())),
+            "distinct_services": len({service_key(line) for line in selected}),
+            "distinct_networks": len({network_key(get_endpoint(line)[1]) for line in selected}),
         }
     atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
@@ -887,6 +966,9 @@ def main():
     ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
     if dropped_dupes:
         print(f"按服务器去重：丢弃同 host:端口 的重复节点 {dropped_dupes} 个，保留 {len(ranked_nodes)} 个独立节点")
+    ranked_nodes, dropped_concentrated = dedupe_for_subscription(ranked_nodes)
+    if dropped_concentrated:
+        print(f"多样性闸门：丢弃同服务/同网段超额节点 {dropped_concentrated} 个，保留 {len(ranked_nodes)} 个分散节点")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
     print("订阅排序（前置 / 档位 / Mbps）:")
     for rank, (uri, result) in enumerate(ranked_nodes[:10], 1):
