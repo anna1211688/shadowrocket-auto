@@ -470,6 +470,18 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(len(kept), 3)
         self.assertEqual(dropped, 3)
 
+    def test_dedupe_for_subscription_priority_network_cap_8(self):
+        nodes = [
+            (f"trojan://pass{i}@10.9.8.{i}:443", {"download_mbps": 9.0})
+            for i in range(1, 11)
+        ]
+        priority_keys = {collector.history_key(uri) for uri, _ in nodes}
+        kept, dropped = collector.dedupe_for_subscription(nodes, priority_keys=priority_keys)
+        self.assertEqual(len(kept), 8)
+        self.assertEqual(dropped, 2)
+        kept_regular, _ = collector.dedupe_for_subscription(nodes)
+        self.assertEqual(len(kept_regular), 3)
+
     def test_dedupe_for_subscription_keeps_distinct_sources(self):
         nodes = [
             ("trojan://pass1@10.1.1.1:443", {"download_mbps": 9.0}),

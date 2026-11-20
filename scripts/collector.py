@@ -706,16 +706,22 @@ def network_key(host: str) -> tuple:
 
 MAX_PER_SERVICE = 2
 MAX_PER_NETWORK = 3
+MAX_PER_NETWORK_PRIORITY = 8
 
 
-def dedupe_for_subscription(nodes: list[tuple]) -> tuple[list[tuple], int]:
+def dedupe_for_subscription(nodes: list[tuple], priority_keys: set | None = None) -> tuple[list[tuple], int]:
     """多样性闸门：同一服务最多留 MAX_PER_SERVICE 个入口，同一网段
     最多留 MAX_PER_NETWORK 个节点。输入须已按期望顺序排好。
 
     依据 2026-11-20 深圳实测：订阅的死活取决于来源是否分散——曾有
     一轮 33 个节点实际只来自个位数服务/网段，被编目的那几家一倒
     就是整表超时。分散到几十家后，个别来源被封不影响其余。
+    例外（同日晚经用户批准）：保送源节点的网段限额放宽到
+    MAX_PER_NETWORK_PRIORITY——v2rayfree 那批德国 SS 同网段十几个
+    在深圳整段可连，限额 3 会把已验证可用的节点误伤挡下；网段计数
+    仍与普通节点共享，只是保送节点用更高的准入阈值。
     """
+    priority_keys = priority_keys or set()
     service_counts: dict[tuple, int] = {}
     network_counts: dict[tuple, int] = {}
     kept: list[tuple] = []
@@ -724,7 +730,8 @@ def dedupe_for_subscription(nodes: list[tuple]) -> tuple[list[tuple], int]:
         skey = service_key(uri)
         _, host, _ = get_endpoint(uri)
         nkey = network_key(host)
-        if service_counts.get(skey, 0) >= MAX_PER_SERVICE or network_counts.get(nkey, 0) >= MAX_PER_NETWORK:
+        network_cap = MAX_PER_NETWORK_PRIORITY if history_key(uri) in priority_keys else MAX_PER_NETWORK
+        if service_counts.get(skey, 0) >= MAX_PER_SERVICE or network_counts.get(nkey, 0) >= network_cap:
             dropped += 1
             continue
         service_counts[skey] = service_counts.get(skey, 0) + 1
@@ -1222,7 +1229,7 @@ def main():
     ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
     if dropped_dupes:
         print(f"按服务器去重：丢弃同 host:端口 的重复节点 {dropped_dupes} 个，保留 {len(ranked_nodes)} 个独立节点")
-    ranked_nodes, dropped_concentrated = dedupe_for_subscription(ranked_nodes)
+    ranked_nodes, dropped_concentrated = dedupe_for_subscription(ranked_nodes, priority_keys=priority_keys)
     if dropped_concentrated:
         print(f"多样性闸门：丢弃同服务/同网段超额节点 {dropped_concentrated} 个，保留 {len(ranked_nodes)} 个分散节点")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
