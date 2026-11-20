@@ -1,6 +1,7 @@
 import base64
 import json
 import socket
+import urllib.parse
 import tempfile
 from pathlib import Path
 import unittest
@@ -395,6 +396,39 @@ class CnTierTests(unittest.TestCase):
         tcp, _ = collector.select_speed_shortlist(alive, [], seed=1, history=history, now=now)
         for line in veteran_lines:
             self.assertIn(line, tcp)
+
+    def test_infer_region_extended(self):
+        self.assertEqual(collector.infer_region("ss://eA@202.50.253.90:19999#%E6%96%B0%E8%A5%BF%E5%85%B0%20NZ"), "NZ")
+        self.assertEqual(collector.infer_region("trojan://pw@h.example:443#Canada 01"), "CA")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#Indonesia Jakarta"), "ID")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#India Mumbai"), "IN")
+        self.assertEqual(collector.infer_region("vless://u@h.example:443#random-name"), "OTHER")
+
+    def test_rename_node_keeps_identity(self):
+        line = "trojan://pw@h.example:443#old-name"
+        renamed = collector.rename_node(line, "🇭🇰 香港 TROJAN 01")
+        self.assertEqual(collector.get_endpoint(renamed), collector.get_endpoint(line))
+        self.assertEqual(collector.history_key(renamed), collector.history_key(line))
+        self.assertIn("香港", urllib.parse.unquote(urllib.parse.urlsplit(renamed).fragment))
+
+    def test_label_subscription_chinese_names(self):
+        ss_userinfo = base64.urlsafe_b64encode(b"aes-256-gcm:pw").decode().rstrip("=")
+        lines = [
+            f"ss://{ss_userinfo}@202.50.253.90:19999#新西兰 NZ 1",
+            f"ss://{ss_userinfo}@202.50.253.27:19999#新西兰 NZ 2",
+        ]
+        labelled = collector.label_subscription(lines)
+        names = [urllib.parse.unquote(urllib.parse.urlsplit(l).fragment) for l in labelled]
+        self.assertEqual(names, ["🇳🇿 新西兰 SS 01", "🇳🇿 新西兰 SS 02"])
+
+    def test_label_subscription_vmess_ps(self):
+        payload = {"v": "2", "ps": "old", "add": "h.example", "port": "443", "id": "uuid",
+                   "aid": "0", "net": "ws", "type": "none", "host": "", "path": "/", "tls": "tls"}
+        line = "vmess://" + base64.b64encode(json.dumps(payload).encode()).decode()
+        (labelled,) = collector.label_subscription([line])
+        data = json.loads(collector.decode_base64(labelled[8:]))
+        self.assertTrue(data["ps"].endswith("VMESS 01"))
+        self.assertEqual(collector.history_key(labelled), collector.history_key(line))
 
     def test_collect_candidates_priority_first_and_shared_dedup(self):
         stats = {"invalid": 0, "private": 0, "duplicate": 0}

@@ -215,7 +215,112 @@ REGION_KEYWORDS = {
     "US": ("美国", "美國", "洛杉矶", "西雅图", "硅谷", "united states", "los angeles", "seattle", "🇺🇸"),
     "DE": ("德国", "德國", "germany", "frankfurt", "🇩🇪"),
     "GB": ("英国", "英國", "伦敦", "倫敦", "united kingdom", "london", "🇬🇧"),
+    "NZ": ("新西兰", "新西蘭", "new zealand", "auckland", "🇳🇿"),
+    "CA": ("加拿大", "canada", "toronto", "vancouver", "🇨🇦"),
+    "FR": ("法国", "法國", "france", "paris", "🇫🇷"),
+    "NL": ("荷兰", "荷蘭", "netherlands", "amsterdam", "🇳🇱"),
+    "AU": ("澳大利亚", "澳洲", "australia", "sydney", "🇦🇺"),
+    "ID": ("印尼", "印度尼西亚", "indonesia", "jakarta", "🇮🇩"),
+    "IN": ("印度", "india", "mumbai", "🇮🇳"),
+    "RU": ("俄罗斯", "俄羅斯", "russia", "moscow", "🇷🇺"),
+    "TR": ("土耳其", "turkey", "türkiye", "istanbul", "🇹🇷"),
+    "BR": ("巴西", "brazil", "🇧🇷"),
+    "NG": ("尼日利亚", "nigeria", "🇳🇬"),
+    "SC": ("塞舌尔", "seychelles", "🇸🇨"),
+    "FI": ("芬兰", "芬蘭", "finland", "helsinki", "🇫🇮"),
+    "EE": ("爱沙尼亚", "estonia", "🇪🇪"),
+    "ES": ("西班牙", "spain", "madrid", "🇪🇸"),
+    "IT": ("意大利", "italy", "milan", "🇮🇹"),
+    "PL": ("波兰", "波蘭", "poland", "warsaw", "🇵🇱"),
+    "UA": ("乌克兰", "烏克蘭", "ukraine", "kyiv", "🇺🇦"),
+    "VN": ("越南", "vietnam", "🇻🇳"),
+    "TH": ("泰国", "泰國", "thailand", "bangkok", "🇹🇭"),
+    "MY": ("马来西亚", "馬來西亞", "malaysia", "🇲🇾"),
+    "PH": ("菲律宾", "菲律賓", "philippines", "🇵🇭"),
+    "CN": ("中国", "中國", "china", "beijing", "shanghai", "shenzhen", "🇨🇳"),
+    "CH": ("瑞士", "switzerland", "zurich", "🇨🇭"),
+    "SE": ("瑞典", "sweden", "stockholm", "🇸🇪"),
+    "NO": ("挪威", "norway", "🇳🇴"),
+    "DK": ("丹麦", "丹麥", "denmark", "🇩🇰"),
+    "IE": ("爱尔兰", "愛爾蘭", "ireland", "🇮🇪"),
+    "AT": ("奥地利", "austria", "vienna", "🇦🇹"),
+    "AR": ("阿根廷", "argentina", "🇦🇷"),
+    "MX": ("墨西哥", "mexico", "🇲🇽"),
+    "ZA": ("南非", "south africa", "🇿🇦"),
+    "AE": ("阿联酋", "迪拜", "dubai", "uae", "emirates", "🇦🇪"),
+    "IL": ("以色列", "israel", "🇮🇱"),
+    "KZ": ("哈萨克斯坦", "kazakhstan", "🇰🇿"),
 }
+
+REGION_ZH = {
+    "HK": "香港", "TW": "台湾", "JP": "日本", "SG": "新加坡", "KR": "韩国",
+    "US": "美国", "DE": "德国", "GB": "英国", "NZ": "新西兰", "CA": "加拿大",
+    "FR": "法国", "NL": "荷兰", "AU": "澳大利亚", "ID": "印尼", "IN": "印度",
+    "RU": "俄罗斯", "TR": "土耳其", "BR": "巴西", "NG": "尼日利亚", "SC": "塞舌尔",
+    "FI": "芬兰", "EE": "爱沙尼亚", "ES": "西班牙", "IT": "意大利", "PL": "波兰",
+    "UA": "乌克兰", "VN": "越南", "TH": "泰国", "MY": "马来西亚", "PH": "菲律宾",
+    "CN": "中国", "CH": "瑞士", "SE": "瑞典", "NO": "挪威", "DK": "丹麦",
+    "IE": "爱尔兰", "AT": "奥地利", "AR": "阿根廷", "MX": "墨西哥", "ZA": "南非",
+    "AE": "阿联酋", "IL": "以色列", "KZ": "哈萨克斯坦", "OTHER": "未知地区",
+}
+
+REGION_FLAGS = {
+    "HK": "🇭🇰", "TW": "🇹🇼", "JP": "🇯🇵", "SG": "🇸🇬", "KR": "🇰🇷",
+    "US": "🇺🇸", "DE": "🇩🇪", "GB": "🇬🇧", "NZ": "🇳🇿", "CA": "🇨🇦",
+    "FR": "🇫🇷", "NL": "🇳🇱", "AU": "🇦🇺", "ID": "🇮🇩", "IN": "🇮🇳",
+    "RU": "🇷🇺", "TR": "🇹🇷", "BR": "🇧🇷", "NG": "🇳🇬", "SC": "🇸🇨",
+    "FI": "🇫🇮", "EE": "🇪🇪", "ES": "🇪🇸", "IT": "🇮🇹", "PL": "🇵🇱",
+    "UA": "🇺🇦", "VN": "🇻🇳", "TH": "🇹🇭", "MY": "🇲🇾", "PH": "🇵🇭",
+    "CN": "🇨🇳", "CH": "🇨🇭", "SE": "🇸🇪", "NO": "🇳🇴", "DK": "🇩🇰",
+    "IE": "🇮🇪", "AT": "🇦🇹", "AR": "🇦🇷", "MX": "🇲🇽", "ZA": "🇿🇦",
+    "AE": "🇦🇪", "IL": "🇮🇱", "KZ": "🇰🇿", "OTHER": "🌐",
+}
+
+_PROTOCOL_DISPLAY = {"hysteria2": "HY2", "hy2": "HY2"}
+
+
+def rename_node(line: str, name: str) -> str:
+    """把节点的显示名换成 name（vmess 改 JSON 里的 ps，其余改 # 备注）。
+
+    只动显示名：端点、凭据、传输参数不变，去重键与历史键都不受影响。
+    """
+    protocol = get_protocol(line)
+    if protocol == "vmess":
+        try:
+            rest = line[8:].split("#", 1)[0]
+            body, sep, suffix = rest.partition("?")
+            data = json.loads(decode_base64(body))
+            if not isinstance(data, dict):
+                return line
+            data["ps"] = name
+            encoded = base64.b64encode(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ).decode("ascii")
+            return "vmess://" + encoded + (sep + suffix if sep else "")
+        except (ValueError, TypeError):
+            return line
+    base = line.split("#", 1)[0]
+    return base + "#" + urllib.parse.quote(name, safe="")
+
+
+def label_subscription(lines: list[str]) -> list[str]:
+    """发布前统一命名：旗帜 + 中文地区 + 协议 + 同组序号。
+
+    源站自带的名字多是广告或乱码（如 vless-1863464818），客户端根本
+    分不清节点在哪。地区按 infer_region 从原名/主机名推测，推不出
+    的标「未知地区」。序号按（地区, 协议）分别计数。
+    """
+    counters: dict[tuple, int] = {}
+    labelled = []
+    for line in lines:
+        region = infer_region(line)
+        protocol = get_protocol(line)
+        display = _PROTOCOL_DISPLAY.get(protocol, protocol.upper())
+        key = (region, display)
+        counters[key] = counters.get(key, 0) + 1
+        name = f"{REGION_FLAGS.get(region, '🌐')} {REGION_ZH.get(region, '未知地区')} {display} {counters[key]:02d}"
+        labelled.append(rename_node(line, name))
+    return labelled
 
 
 def get_node_label(line: str) -> str:
@@ -1127,8 +1232,8 @@ def main():
         fronted_mark = "CF前置 " if cdn_fronted(uri) else ""
         print(f"  #{rank} {fronted_mark}{'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
-    # 6. 只发布已完成代理隧道下载测试的节点；订阅按档位、再按 Mbps 排序。
-    content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
+    # 6. 只发布已完成代理隧道下载测试的节点；发布名统一为中文地区标记。
+    content = base64.b64encode("\n".join(label_subscription(selected)).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
     write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history)
     print(f"质量报告已更新: {QUALITY_REPORT}")
