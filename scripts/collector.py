@@ -276,14 +276,49 @@ def cn_tier(line: str) -> int:
     return 2
 
 
+_CF_IPV4_NETWORKS = [
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "188.114.96.0/20",
+        "162.158.0.0/15", "198.41.128.0/17", "162.159.0.0/16",
+    )
+]
+_CF_IPV6_NETWORK = ipaddress.ip_network("2606:4700::/32")
+
+
+def cdn_fronted(line: str) -> bool:
+    """节点端点是否由 Cloudflare 前置（CDN 中转）。
+
+    2026-11-20 深圳实测教训：直连 IP 的 Reality/TLS 节点（A 档）订阅
+    31 个在大陆仍全部超时——公开服务器 IP 早被名单收录，按 IP 封锁
+    与协议伪装无关。经 Cloudflare 前置的节点对外端点是 CF 的 anycast
+    地址、真实服务器藏在后面，CF 地址段承载海量正常站点、极少被整段
+    封锁，是公开池里从大陆连通率最高的一类，故单列最高优先级。
+    """
+    _, host, _ = get_endpoint(line)
+    if not host:
+        return False
+    host = str(host).lower()
+    if host.endswith(("workers.dev", "pages.dev")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        return address in _CF_IPV6_NETWORK
+    return any(address in network for network in _CF_IPV4_NETWORKS)
+
+
 # 大陆优化专用模式（2026-11-20 用户定）：订阅只收 A/B 档节点
 # （VLESS Reality、443 TLS、其他 TLS），C 档（SS、明文、hy2 等 UDP）
 # 对大陆客户端基本无用，不再占用测速名额、也不进订阅。
-# 实测记录：A/B 通过率约 5–10%，故 200 个并行测速名额全给 A/B
-# （A140/B60），每轮预期产出约 10 个大陆优化节点；某轮若 A/B 全部
-# 未通过，沿用「保留上一版订阅」逻辑，不会把订阅清空。
-# 每档名单按小时种子轮换切片，让上千个 A 档候选都有被测到的机会。
-TIER_TCP_QUOTAS = {0: 140, 1: 60, 2: 0}
+# 在 A/B 之内再分优先级：Cloudflare 前置节点（池中约 700+ 个 A/B
+# 候选）单列一组拿 120 个名额，直连 A 档 50、B 档 30；订阅排序同样
+# 前置优先。某轮若全部未通过，沿用「保留上一版订阅」逻辑。
+# 每组名单按小时种子轮换切片，让候选都有被测到的机会。
+FRONTED_TCP_QUOTA = 120
+TIER_TCP_QUOTAS = {0: 50, 1: 30, 2: 0}
 SPEED_TCP_LIMIT = 200
 SPEED_UDP_LIMIT = 0
 
@@ -314,34 +349,36 @@ def _rotate(entries: list, rng: random.Random) -> list:
 
 
 def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None):
-    """按档位配额选 TCP 测速名单；某档不足时，剩余名额按 A→B→C 顺序补位。
+    """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B）。
 
-    每档候选先按小时种子轮换再抽取：alive 已按延迟排序，轮换让每小时
+    某组不足时，剩余名额按组优先级补位；C 档不在任何组内。
+    每组候选先按小时种子轮换再抽取：alive 已按延迟排序，轮换让每小时
     被测的是不同切片（切片内仍按延迟优先），避免长期只测同一批节点。
     """
     if seed is None:
         seed = int(time.time() // 3600)
     rng = random.Random(seed)
-    tier_entries: dict[int, list[tuple]] = {}
-    for entry in alive:
-        tier_entries.setdefault(cn_tier(entry[0]), []).append(entry)
+    # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B。
+    # C 档不进任何组，永远不测速。
+    groups: list[tuple[list[tuple], int]] = []
+    fronted = [e for e in alive if cn_tier(e[0]) <= 1 and cdn_fronted(e[0])]
+    direct_a = [e for e in alive if cn_tier(e[0]) == 0 and not cdn_fronted(e[0])]
+    direct_b = [e for e in alive if cn_tier(e[0]) == 1 and not cdn_fronted(e[0])]
+    groups = [(fronted, FRONTED_TCP_QUOTA), (direct_a, TIER_TCP_QUOTAS[0]), (direct_b, TIER_TCP_QUOTAS[1])]
     tcp_shortlist: list[str] = []
-    leftovers: dict[int, list[tuple]] = {}
-    for tier in (0, 1, 2):
-        entries = _rotate(tier_entries.get(tier, []), rng)
-        picked = _round_robin_by_protocol(entries, TIER_TCP_QUOTAS[tier])
+    leftovers: list[list[tuple]] = []
+    for entries, quota in groups:
+        rotated = _rotate(entries, rng)
+        picked = _round_robin_by_protocol(rotated, quota)
         tcp_shortlist.extend(picked)
         picked_lines = set(picked)
-        leftovers[tier] = [entry for entry in entries if entry[0] not in picked_lines]
-    # 补位只在配额 > 0 的档位之间进行：配额为 0 的档位（如大陆优化
-    # 模式下的 C 档）永远不进测速名单。
-    for tier in (0, 1, 2):
-        if TIER_TCP_QUOTAS[tier] <= 0:
-            continue
+        leftovers.append([entry for entry in rotated if entry[0] not in picked_lines])
+    # 补位按组优先级进行，前组不足时由后组补满，反之亦然。
+    for leftover in leftovers:
         if len(tcp_shortlist) >= SPEED_TCP_LIMIT:
             break
         tcp_shortlist.extend(
-            _round_robin_by_protocol(leftovers[tier], SPEED_TCP_LIMIT - len(tcp_shortlist))
+            _round_robin_by_protocol(leftover, SPEED_TCP_LIMIT - len(tcp_shortlist))
         )
     return tcp_shortlist, _rotate(udp_candidates, rng)[:SPEED_UDP_LIMIT]
 
@@ -370,7 +407,8 @@ def dedupe_by_endpoint(nodes: list[tuple]) -> list[tuple]:
 def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                          alive: list[tuple],
                          subscription_status: str = "preserved_previous",
-                         speed_results: list[tuple] | None = None) -> None:
+                         speed_results: list[tuple] | None = None,
+                         selected: list[str] | None = None) -> None:
     """写入不包含节点地址/凭据的聚合质量报告。"""
     import datetime
     import statistics
@@ -438,7 +476,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
     report = {
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "measurement": "proxy_download_speed_mbps_with_tcp_latency_context",
-        "ranking": "cn_tier_then_measured_proxy_download_mbps_descending",
+        "ranking": "cdn_fronted_then_cn_tier_then_measured_proxy_download_mbps_descending",
         "cn_tier_counts": dict(sorted(tier_counts.items())),
         "speed_test": {
             "candidates_considered": len(speed_results),
@@ -470,7 +508,7 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
                 if result.get("status") != "ok"
             ][:25],
         },
-        "note": "Mainland-China optimised subscription: only tier A/B nodes (VLESS Reality, TLS on port 443, other TLS) are speed-tested and published; tier C (SS, plain, UDP) is excluded. Order is tier first, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
+        "note": "Mainland-China optimised subscription: only tier A/B nodes (VLESS Reality, TLS on port 443, other TLS) are speed-tested and published; tier C (SS, plain, UDP) is excluded. Cloudflare-fronted nodes rank first (their endpoint IPs are rarely blocked from mainland China), then tier, then measured download Mbps through a sing-box proxy tunnel. Only supported URI formats with successful complete downloads are ranked; this is GitHub-runner egress performance, not a guarantee of client-side speed or reachability.",
         "subscription_status": subscription_status,
         "raw_nodes": raw_count,
         "unique_candidates": candidate_count,
@@ -488,6 +526,16 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             "jitter_p95": percentile(jitters, 0.95),
         },
     }
+    if selected is not None:
+        selected_tiers: dict[str, int] = {}
+        for line in selected:
+            tier = "ABC"[cn_tier(line)]
+            selected_tiers[tier] = selected_tiers.get(tier, 0) + 1
+        report["subscription"] = {
+            "nodes": len(selected),
+            "cdn_fronted": sum(1 for line in selected if cdn_fronted(line)),
+            "tier_counts": dict(sorted(selected_tiers.items())),
+        }
     atomic_write_text(QUALITY_REPORT, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
 
 
@@ -833,27 +881,28 @@ def main():
         print("没有节点通过实际代理下载测试，保留上一版订阅。")
         return
 
-    # 订阅排序：先大陆可用性档位，再按实测 Mbps，让客户端列表顶部
-    # 优先出现大陆最可能连通的节点；再按服务器去重，只留独立节点。
-    successful_speed_nodes.sort(key=lambda item: (cn_tier(item[0]), -item[1]["download_mbps"]))
+    # 订阅排序：CF 前置优先（大陆连通率最高），再按档位、实测 Mbps；
+    # 然后按服务器去重，只留独立节点。
+    successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1, cn_tier(item[0]), -item[1]["download_mbps"]))
     ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
     if dropped_dupes:
         print(f"按服务器去重：丢弃同 host:端口 的重复节点 {dropped_dupes} 个，保留 {len(ranked_nodes)} 个独立节点")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
-    print("订阅排序（档位 / Mbps）:")
+    print("订阅排序（前置 / 档位 / Mbps）:")
     for rank, (uri, result) in enumerate(ranked_nodes[:10], 1):
         protocol, host, port = get_endpoint(uri)
-        print(f"  #{rank} {'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
+        fronted_mark = "CF前置 " if cdn_fronted(uri) else ""
+        print(f"  #{rank} {fronted_mark}{'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
     # 6. 只发布已完成代理隧道下载测试的节点；订阅按档位、再按 Mbps 排序。
     content = base64.b64encode("\n".join(selected).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
-    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results)
+    write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
     print(f"\n已生成真实测速节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
-    print("订阅仅包含已通过实际代理下载测试的节点，按大陆可用性档位、再按 Mbps 排序；不会提交节点 URI。")
+    print("订阅仅包含已通过实际代理下载测试的节点，CF 前置优先、再按档位和 Mbps 排序；不会提交节点 URI。")
     print(f"  → {QUALITY_REPORT} (仅含哈希节点 ID 与聚合测速数据)")
 
 

@@ -303,11 +303,22 @@ class CnTierTests(unittest.TestCase):
     def _entry(line, protocol):
         return (line, 0.1, protocol, 0.01)
 
+    def test_cdn_fronted_detection(self):
+        self.assertTrue(collector.cdn_fronted("vless://uuid@104.16.10.22:443?security=tls"))
+        self.assertTrue(collector.cdn_fronted("vless://uuid@172.64.150.43:443?security=tls"))
+        self.assertTrue(collector.cdn_fronted("vless://uuid@host.workers.dev:443?security=tls"))
+        self.assertTrue(collector.cdn_fronted("vless://uuid@host.pages.dev:443?security=tls"))
+        self.assertTrue(collector.cdn_fronted("vless://uuid@[2606:4700::1]:443?security=tls"))
+        self.assertFalse(collector.cdn_fronted("vless://uuid@8.8.8.8:443?security=tls"))
+        self.assertFalse(collector.cdn_fronted("trojan://secret@example.com:443"))
+
     def test_shortlist_respects_tier_quotas(self):
         alive = []
-        for i in range(150):
+        for i in range(130):
+            alive.append(self._entry(f"vless://uuid@104.16.10.{i % 250 + 1}:443?security=tls", "vless"))
+        for i in range(60):
             alive.append(self._entry(f"vless://uuid@a{i}.example:443?security=reality&pbk=k", "vless"))
-        for i in range(70):
+        for i in range(40):
             alive.append(self._entry(f"trojan://secret@b{i}.example:8443", "trojan"))
         ss_userinfo = base64.urlsafe_b64encode(b"aes-128-gcm:secret").decode().rstrip("=")
         for i in range(50):
@@ -316,8 +327,9 @@ class CnTierTests(unittest.TestCase):
         tcp, udp_short = collector.select_speed_shortlist(alive, udp, seed=1)
         tiers = [collector.cn_tier(line) for line in tcp]
         self.assertEqual(len(tcp), 200)
-        self.assertEqual(tiers.count(0), 140)
-        self.assertEqual(tiers.count(1), 60)
+        self.assertEqual(sum(1 for line in tcp if collector.cdn_fronted(line)), 120)
+        self.assertEqual(tiers.count(0), 170)
+        self.assertEqual(tiers.count(1), 30)
         self.assertEqual(tiers.count(2), 0)
         self.assertEqual(len(udp_short), 0)
 
