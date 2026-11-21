@@ -19,6 +19,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / "config" / "sources.txt"
 PRIORITY_SOURCES = ROOT / "config" / "priority_sources.txt"
+FIELD_VERIFIED_NETWORKS = ROOT / "config" / "field_verified_networks.txt"
 DISCOVERY_CONFIG = ROOT / "config" / "discovery.json"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
 QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
@@ -689,6 +690,37 @@ def load_priority_sources() -> set:
     return urls
 
 
+def load_field_verified_networks() -> list:
+    """深圳实测认证网段（config/field_verified_networks.txt）。
+
+    用户在深圳逐个实测连通过的服务所在 /24 网段：两晚实测证明决定
+    节点生死的是服务/IP 段是否被封锁编目，这些段是被实测证明未被
+    编目的。网段内节点在测速名单与订阅排序中优先保位。登记只来自
+    真实实测，不凭猜测添加；后续实测整批超时的网段应移除。
+    """
+    networks = []
+    if FIELD_VERIFIED_NETWORKS.exists():
+        for line in FIELD_VERIFIED_NETWORKS.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                try:
+                    networks.append(ipaddress.ip_network(line, strict=False))
+                except ValueError:
+                    continue
+    return networks
+
+
+def is_field_verified(line: str, networks: list | None) -> bool:
+    """节点端点 IP 是否落在深圳实测认证网段内（域名端点不匹配）。"""
+    if not networks:
+        return False
+    _, host, _ = get_endpoint(line)
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in networks)
+
 def collect_candidates(priority_raw_nodes: list[str], raw_nodes: list[str], stats: dict):
     """校验并去重，返回 (优先候选, 普通候选)；两列共用一套去重键，
     优先源节点先占位，普通源里的同一节点算重复。"""
@@ -853,7 +885,8 @@ def _rotate(entries: list, rng: random.Random) -> list:
 
 def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: int | None = None,
                            history: dict | None = None, now: datetime.datetime | None = None,
-                           priority_keys: set | None = None):
+                           priority_keys: set | None = None,
+                           field_networks: list | None = None):
     """按组配额选 TCP 测速名单（CF 前置 A/B → 直连 A → 直连 B → C 档）。
 
     某组不足时，剩余名额按组优先级补位。
@@ -898,7 +931,8 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
 
         preferred = [e for e in entries
                      if history_key(e[0]) in priority_keys
-                     or is_veteran(history.get(history_key(e[0])), now)]
+                     or is_veteran(history.get(history_key(e[0])), now)
+                     or is_field_verified(e[0], field_networks)]
         preferred.sort(key=pref_rank)
         preferred_lines = {e[0] for e in preferred}
         others = [e for e in entries if e[0] not in preferred_lines]
@@ -927,6 +961,7 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
         line for line in udp_candidates
         if history_key(line) in priority_keys
         or is_veteran(history.get(history_key(line)), now)
+        or is_field_verified(line, field_networks)
     ]
     udp_preferred.sort(key=udp_pref_rank)
     udp_preferred_lines = set(udp_preferred)
@@ -1583,8 +1618,10 @@ def main():
     # 5. TCP 延迟只用于缩小候选范围；测速名单按档位配额选（见
     # select_speed_shortlist），订阅排序先档位、再实测 Mbps。
     alive.sort(key=lambda x: (x[1], x[3], PROTOCOL_WEIGHT.get(x[2], 9)))
+    field_networks = load_field_verified_networks()
     tcp_shortlist, udp_shortlist = select_speed_shortlist(alive, udp_candidates, history=history, now=run_now,
-                                                          priority_keys=priority_keys)
+                                                          priority_keys=priority_keys,
+                                                          field_networks=field_networks)
     veteran_picks = sum(1 for line in tcp_shortlist if is_veteran(history.get(history_key(line)), run_now))
     priority_picks = sum(1 for line in tcp_shortlist if history_key(line) in priority_keys)
     print(f"本轮历史条目 {len(history)} 个，测速名单含老兵节点 {veteran_picks} 个、优先源节点 {priority_picks} 个")
@@ -1669,10 +1706,13 @@ def main():
     # 本轮结果并入历史（订阅排序与报告的老兵判定都用更新后的历史）。
     history = update_node_history(history, [e[0] for e in alive],
                                   [uri for uri, _ in successful_speed_nodes], run_now)
-    # 订阅排序：CF 前置优先，再按档位、同档内老兵靠前、再按出口
+    # 订阅排序：CF 前置优先，深圳实测认证网段靠前，再按档位、同档
+    # 内老兵靠前、再按出口
     # 类型（住宅>移动>未测>机场>代理——深圳实测住宅出口最耐活，出口
     # 类型测速时已顺带测得）、最后实测 Mbps；然后按服务器去重。
-    successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1, cn_tier(item[0]),
+    successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1,
+                                                  0 if is_field_verified(item[0], field_networks) else 1,
+                                                  cn_tier(item[0]),
                                                   0 if is_veteran(history.get(history_key(item[0])), run_now) else 1,
                                                   egress_rank(item[1]),
                                                   -item[1]["download_mbps"]))
@@ -1689,6 +1729,7 @@ def main():
     if stats["shenzhen_filtered"]:
         print(f"深圳实测白名单：滤除未实测验证类型 {stats['shenzhen_filtered']} 个，保留 {len(ranked_nodes)} 个")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
+    stats["field_verified"] = sum(1 for uri in selected if is_field_verified(uri, field_networks))
     print("订阅排序（前置 / 档位 / Mbps）:")
     for rank, (uri, result) in enumerate(ranked_nodes[:10], 1):
         protocol, host, port = get_endpoint(uri)

@@ -708,3 +708,23 @@ class ShenzhenWhitelistTests(unittest.TestCase):
             "vless://uuid@h.example:443?security=reality&pbk=k#x"))
         self.assertFalse(collector.shenzhen_publishable(
             "vless://uuid@h.example:443?security=tls#x"))
+
+
+class FieldVerifiedTests(unittest.TestCase):
+    """深圳实测认证网段：加载、匹配与真实配置文件契约。"""
+
+    def test_matcher_by_network(self):
+        import ipaddress as _ip
+        nets = [_ip.ip_network("202.50.253.0/24")]
+        self.assertTrue(collector.is_field_verified("ss://eA@202.50.253.18:19999#x", nets))
+        self.assertFalse(collector.is_field_verified("ss://eA@202.50.254.18:19999#x", nets))
+        # 域名端点不匹配（不做解析，避免排序路径引入网络依赖）。
+        self.assertFalse(collector.is_field_verified("ss://eA@node.example:8388#x", nets))
+        self.assertFalse(collector.is_field_verified("ss://eA@202.50.253.18:19999#x", []))
+        self.assertFalse(collector.is_field_verified("ss://eA@202.50.253.18:19999#x", None))
+
+    def test_real_config_networks_parse(self):
+        nets = collector.load_field_verified_networks()
+        self.assertTrue(nets)
+        for net in nets:
+            self.assertEqual(net.prefixlen, 24)
