@@ -1462,7 +1462,10 @@ def test_node(line: str):
 # 不开放通配或子域，避免采集器被任意 URL 滥用（SSRF 面不变）。
 # aa.mibei77.com：米贝订阅，2026-11-20 用户批准加入（其节点深圳实测
 # 大批可连）；链接为按月目录的快照地址，失效后该源自然无产出。
-EXTRA_SOURCE_HOSTS = {"aa.mibei77.com", "tian.zmxoo.xyz"}
+# freeclashnode 两主机：2026-11-22 用户批准加入（普通源）。其节点
+# 文件链接带日期、每日更换，由 resolve_freeclashnode_sources 解析。
+EXTRA_SOURCE_HOSTS = {"aa.mibei77.com", "tian.zmxoo.xyz",
+                      "node.freeclashnode.com", "www.freeclashnode.com"}
 
 
 def is_allowed_source_url(url: str) -> bool:
@@ -1529,6 +1532,91 @@ def fetch_source(url: str) -> list[str]:
     return []
 
 
+FREECLASHNODE_LISTING = "https://www.freeclashnode.com/free-node/"
+# 列表页里的文章链接是相对路径（/free-node/日期-...htm），匹配路径后拼主机。
+_FCN_POST_RE = re.compile(
+    r"/free-node/\d{4}-\d{2}-\d{2}-free-node-subscribe-links\.htm")
+_FCN_FILE_RE = re.compile(r"https://node\.freeclashnode\.com/uploads/[\w./-]+\.txt")
+
+
+def _fetch_text(url: str) -> str | None:
+    """按与 fetch_source 相同的安全纪律抓一个文本页（白名单主机、
+    不跟随重定向、2MB 上限、总时限），失败返回 None。"""
+    if not is_allowed_source_url(url):
+        return None
+    deadline = time.monotonic() + SOURCE_DEADLINE
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        request_timeout = (min(SOURCE_TIMEOUT[0], remaining), min(SOURCE_TIMEOUT[1], remaining))
+        with requests.get(url, timeout=request_timeout, headers={"User-Agent": USER_AGENT},
+                          stream=True, allow_redirects=False) as resp:
+            if resp.status_code != 200:
+                return None
+            chunks, total = [], 0
+            for chunk in resp.iter_content(chunk_size=16384):
+                if time.monotonic() >= deadline:
+                    return None
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_SOURCE_BYTES:
+                    return None
+                chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", "replace")
+    except Exception:
+        return None
+
+
+def extract_freeclashnode_file_urls(html: str) -> list[str]:
+    """从 FreeClashNode 文章页提取 V2ray 文本订阅链接（只要 .txt，
+    YAML/JSON 格式管线不解析），去重保序并过源白名单。"""
+    urls = []
+    for url in _FCN_FILE_RE.findall(html or ""):
+        if url not in urls and is_allowed_source_url(url):
+            urls.append(url)
+    return urls
+
+
+def freeclashnode_fallback_urls(day: datetime.date) -> list[str]:
+    """按日期规律拼当天的节点文件地址（文章页抓不到时的兜底）：
+    uploads/{年}/{月}/{序号}-{年月日}.txt，序号 0..4。"""
+    return [
+        f"https://node.freeclashnode.com/uploads/{day:%Y}/{day:%m}/{i}-{day:%Y%m%d}.txt"
+        for i in range(5)
+    ]
+
+
+def resolve_freeclashnode_sources(now: datetime.datetime) -> list[str]:
+    """解析 FreeClashNode 当天发布的节点文件链接（普通源）。
+
+    该站每天发一篇文章、文件链接带日期，静态地址写不进配置：
+    先抓列表页找最新文章、再从文章页提取 .txt 链接；任一步失败
+    则按日期规律拼今天与昨天的地址兜底（不存在的文件抓取时自然
+    无产出）。整体失败返回空列表，不影响主流程。
+    """
+    try:
+        listing = _fetch_text(FREECLASHNODE_LISTING)
+        posts = []
+        if listing:
+            for path in _FCN_POST_RE.findall(listing):
+                url = "https://www.freeclashnode.com" + path
+                if url not in posts:
+                    posts.append(url)
+        for post in posts[:2]:
+            html = _fetch_text(post)
+            urls = extract_freeclashnode_file_urls(html) if html else []
+            if urls:
+                return urls[:10]
+        urls = []
+        for delta in (0, 1):
+            day = (now - datetime.timedelta(days=delta)).date()
+            urls.extend(freeclashnode_fallback_urls(day))
+        return urls
+    except Exception:
+        return []
+
 def main():
     run_now = datetime.datetime.now(datetime.timezone.utc)
     history = load_node_history()
@@ -1589,6 +1677,14 @@ def main():
         }
         print(f"源发现: {discovery_stats}")
 
+    # 1c. FreeClashNode 每日源（普通源，2026-11-22 用户批准）：链接
+    # 带日期每日更换，先解析出当天的文件地址再并入源列表。
+    fcn_urls = [url for url in resolve_freeclashnode_sources(run_now)
+                if url not in configured_urls]
+    if fcn_urls:
+        sources.extend(fcn_urls)
+        print(f"FreeClashNode 每日源: 解析到 {len(fcn_urls)} 个文件")
+
     # 2. 拉取所有节点（带重试）；优先源单独收集，不受总量截断影响。
     priority_urls = load_priority_sources()
     raw_nodes: list[str] = []
@@ -1615,6 +1711,7 @@ def main():
 
     # 3. 初步过滤 + 按端点、凭据和传输参数去重；优先候选不受上限约束。
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0, "udp_unverified": 0}
+    stats["freeclashnode_sources"] = len(fcn_urls)
     priority_candidates, other_candidates = collect_candidates(priority_raw_nodes, raw_nodes, stats)
     priority_keys = {history_key(line) for line in priority_candidates}
 

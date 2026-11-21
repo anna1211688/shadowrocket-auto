@@ -769,3 +769,40 @@ class FieldEvidenceShapingTests(unittest.TestCase):
         self.assertEqual(len(hy2_kept), collector.HY2_SUBSCRIPTION_CAP + 1)  # 封顶 + 认证段 1
         self.assertEqual(stats["hy2_capped"], 13 - collector.HY2_SUBSCRIPTION_CAP)
         self.assertTrue(any(u.startswith("ss://") for u, _ in kept))
+
+
+class FreeClashNodeSourceTests(unittest.TestCase):
+    """FreeClashNode 每日源：白名单、链接提取与日期兜底。"""
+
+    def test_hosts_allowlisted_exactly(self):
+        self.assertTrue(collector.is_allowed_source_url(
+            "https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt"))
+        self.assertTrue(collector.is_allowed_source_url(
+            "https://www.freeclashnode.com/free-node/"))
+        # 子域/仿冒主机不放行。
+        self.assertFalse(collector.is_allowed_source_url(
+            "https://evil.freeclashnode.com/uploads/x.txt"))
+        self.assertFalse(collector.is_allowed_source_url(
+            "http://node.freeclashnode.com/uploads/x.txt"))
+
+    def test_extract_only_txt_deduped(self):
+        html = (
+            '<a href="https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt">a</a>'
+            '<a href="https://node.freeclashnode.com/uploads/2026/11/0-20261121.yaml">b</a>'
+            '<a href="https://node.freeclashnode.com/uploads/2026/11/20261121.json">c</a>'
+            '<a href="https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt">dup</a>'
+            '<a href="https://node.freeclashnode.com/uploads/2026/11/1-20261121.txt">d</a>'
+        )
+        self.assertEqual(collector.extract_freeclashnode_file_urls(html), [
+            "https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt",
+            "https://node.freeclashnode.com/uploads/2026/11/1-20261121.txt",
+        ])
+
+    def test_fallback_url_shape(self):
+        import datetime as _dt
+        urls = collector.freeclashnode_fallback_urls(_dt.date(2026, 11, 21))
+        self.assertEqual(len(urls), 5)
+        self.assertEqual(urls[0],
+                         "https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt")
+        self.assertEqual(urls[-1],
+                         "https://node.freeclashnode.com/uploads/2026/11/4-20261121.txt")
