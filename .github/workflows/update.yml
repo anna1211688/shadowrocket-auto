@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: update-subscription
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -49,20 +49,6 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Collect nodes
         run: python scripts/collector.py
-      - name: Save generated public artifacts only
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- docs/quality_report.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Update aggregate quality report"
-            git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" push origin "HEAD:${GITHUB_REF_NAME}"
-          else
-            echo 'No public artifact changes'
-          fi
-
       - name: Publish public Shadowrocket subscription to gh-pages
         if: success() && hashFiles('docs/shadowrocket.txt') != ''
         env:
@@ -81,3 +67,37 @@ jobs:
           auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -C "$pages_dir" -c http.extraheader="$auth_header" push --force origin HEAD:gh-pages
           echo 'Published subscription file to gh-pages/shadowrocket.txt'
+
+      - name: Save generated public artifacts only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- docs/quality_report.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update aggregate quality report"
+            auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            # 推送前先同步远端最新提交并 rebase 本轮报告提交，失败重试
+            # 3 次：运行期间若有外部提交推上 main，旧写法会直接以
+            # non-fast-forward 失败、整轮报告丢失（审查整改）。
+            for attempt in 1 2 3; do
+              git -c http.extraheader="$auth_header" fetch origin "$GITHUB_REF_NAME"
+              if ! git rebase "origin/$GITHUB_REF_NAME"; then
+                git rebase --abort
+                echo 'Rebase onto latest main failed' >&2
+                exit 1
+              fi
+              if git -c http.extraheader="$auth_header" push origin "HEAD:${GITHUB_REF_NAME}"; then
+                echo "Report pushed (attempt $attempt)"
+                break
+              fi
+              if [ "$attempt" = "3" ]; then
+                echo 'Report push failed after 3 attempts' >&2
+                exit 1
+              fi
+              sleep 5
+            done
+          else
+            echo 'No public artifact changes'
+          fi
