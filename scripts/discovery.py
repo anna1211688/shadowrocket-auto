@@ -38,9 +38,26 @@ MAX_URIS_PER_CHANNEL = 400
 # 大小写只对协议头用 (?i:...) 局部忽略：全局 IGNORECASE 会让否定字符
 # 类 [^\x7f-…] 连带排除字母 i/I（其折叠伙伴 ı/İ 落在该区间内）。
 _URI_RE = re.compile(
-    r"(?i:ss|ssr|vmess|vless|trojan|hysteria2|hy2|tuic|socks5|socks)://[^\s\"'<>\\\x7f-\uffff]+"
+    r"(?i:ss|ssr|vmess|vless|trojan|hysteria2|hysteria|hy2|tuic|socks5|socks|anytls)://[^\s\"'<>\\\x7f-\uffff]+"
 )
 _URL_RE = re.compile(r"(?i:https?)://[^\s\"'<>\\\x7f-\uffff]+")
+
+
+def _looks_like_http_proxy(url: str) -> bool:
+    """http(s) 链接里哪些是代理节点、哪些是订阅地址：节点链接带显式
+    端口、无路径无查询（http://user:pass@host:8080 型）；订阅地址几
+    乎总有文件路径或令牌查询。判错的代价不对称——订阅地址误判为
+    节点只是进候选池被测活淘汰，反之节点误判为订阅会被白名单挡下，
+    故形状拿不准时按节点处理不了的保守口径：必须有显式端口。"""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        return (
+            parsed.port is not None
+            and parsed.path in ("", "/")
+            and not parsed.query
+        )
+    except ValueError:
+        return False
 _TRAILING_JUNK = "\"'<>，。；、）】」』)]}>&"
 
 
@@ -68,47 +85,74 @@ def extract_candidates(text: str) -> tuple[list[str], list[str]]:
         url = _clean_token(match.group(0))
         if not url or url in seen_uris or url in seen_urls:
             continue
+        # http(s) 代理节点链接（collector 支持 http/https 出站）形状
+        # 符合时归节点，否则按普通 URL（候选订阅地址）处理。
+        if _looks_like_http_proxy(url):
+            seen_uris.add(url)
+            uris.append(url)
+            continue
         seen_urls.add(url)
         urls.append(url)
     return uris, urls
 
 
-def _get_text(url: str, headers: dict | None = None) -> str | None:
-    """带上限地抓取一个固定站点的页面文本；失败返回 None。"""
+def _fetch_bytes(url: str, headers: dict | None, deadline: float | None) -> bytes | None:
+    """抓一个固定站点 URL 的原始字节；失败/超限/超时返回 None。
+
+    审查整改（2026-11-21）：①不跟随重定向——「只访问固定站点」的
+    承诺曾被 3xx 击穿，固定站点把抓取带去任意主机；3xx 一律视为
+    失败。②文本与 JSON 共用同一条带字节上限的流式读取（此前
+    _get_json 全量读入无上限）。③deadline 为整轮发现的绝对截止，
+    每次请求的超时按剩余时间收紧，单渠道不再能超支总时限数倍。
+    """
+    timeout = REQUEST_TIMEOUT
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        timeout = (min(REQUEST_TIMEOUT[0], remaining), min(REQUEST_TIMEOUT[1], remaining))
     try:
         with requests.get(
             url,
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout,
             headers={"User-Agent": USER_AGENT, **(headers or {})},
-            allow_redirects=True,
+            allow_redirects=False,
+            stream=True,
         ) as resp:
             if resp.status_code != 200:
                 return None
             chunks, total = [], 0
-            for chunk in resp.iter_content(chunk_size=16384, decode_unicode=True):
+            for chunk in resp.iter_content(chunk_size=16384):
                 if not chunk:
                     continue
                 total += len(chunk)
                 if total > MAX_TEXT_BYTES:
-                    break
+                    return None
                 chunks.append(chunk)
-            return "".join(chunks)
+            return b"".join(chunks)
     except Exception:
         return None
 
 
-def _get_json(url: str, headers: dict | None = None):
+def _get_text(url: str, headers: dict | None = None, deadline: float | None = None) -> str | None:
+    raw = _fetch_bytes(url, headers, deadline)
+    if raw is None:
+        return None
+    return raw.decode("utf-8", "replace")
+
+
+def _get_json(url: str, headers: dict | None = None, deadline: float | None = None):
+    raw = _fetch_bytes(url, headers, deadline)
+    if raw is None:
+        return None
     try:
-        with requests.get(
-            url,
-            timeout=REQUEST_TIMEOUT,
-            headers={"User-Agent": USER_AGENT, **(headers or {})},
-        ) as resp:
-            if resp.status_code != 200:
-                return None
-            return resp.json()
-    except Exception:
+        return json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
         return None
+
+
+def _expired(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
 
 
 def github_token() -> str | None:
@@ -145,7 +189,7 @@ def _github_headers(token: str | None) -> dict:
     return headers
 
 
-def crawl_github(config: dict, token: str | None) -> dict:
+def crawl_github(config: dict, token: str | None, deadline: float | None = None) -> dict:
     """GitHub 渠道：代码搜索找含节点链接的文件 + 仓库搜索读 README。
 
     代码搜索需要令牌；无令牌时只做仓库搜索（未授权速率较低但够用）。
@@ -157,10 +201,14 @@ def crawl_github(config: dict, token: str | None) -> dict:
     headers = _github_headers(token)
     if token:
         for query in config.get("code_queries", [])[:4]:
+            if _expired(deadline):
+                notes.append("deadline")
+                break
             data = _get_json(
                 "https://api.github.com/search/code?per_page=20&q="
                 + urllib.parse.quote(query),
                 headers,
+                deadline,
             )
             if not data or "items" not in data:
                 notes.append("code search failed")
@@ -175,10 +223,14 @@ def crawl_github(config: dict, token: str | None) -> dict:
     else:
         notes.append("no token: code search skipped")
     for query in config.get("repo_queries", [])[:4]:
+        if _expired(deadline):
+            notes.append("deadline")
+            break
         data = _get_json(
             "https://api.github.com/search/repositories?per_page=8&q="
             + urllib.parse.quote(query),
             headers,
+            deadline,
         )
         if not data or "items" not in data:
             notes.append("repo search failed")
@@ -186,7 +238,8 @@ def crawl_github(config: dict, token: str | None) -> dict:
         for repo in data["items"][:8]:
             branch = repo.get("default_branch") or "main"
             readme = _get_text(
-                f"https://raw.githubusercontent.com/{repo['full_name']}/{branch}/README.md"
+                f"https://raw.githubusercontent.com/{repo['full_name']}/{branch}/README.md",
+                deadline=deadline,
             )
             if readme:
                 found_uris, found_urls = extract_candidates(readme)
@@ -195,13 +248,16 @@ def crawl_github(config: dict, token: str | None) -> dict:
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
-def crawl_telegram(config: dict) -> dict:
+def crawl_telegram(config: dict, deadline: float | None = None) -> dict:
     """Telegram 渠道：公开频道的网页预览 t.me/s/<频道>，无需登录。"""
     uris: list[str] = []
     urls: list[str] = []
     notes: list[str] = []
     for channel in config.get("channels", [])[:12]:
-        page = _get_text(f"https://t.me/s/{channel}")
+        if _expired(deadline):
+            notes.append("deadline")
+            break
+        page = _get_text(f"https://t.me/s/{channel}", deadline=deadline)
         if not page:
             notes.append(f"{channel}: fetch failed")
             continue
@@ -211,14 +267,18 @@ def crawl_telegram(config: dict) -> dict:
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
-def crawl_google(config: dict) -> dict:
+def crawl_google(config: dict, deadline: float | None = None) -> dict:
     """Google 渠道：抓搜索结果页外链。机房 IP 常被拦截，失败即跳过。"""
     uris: list[str] = []
     urls: list[str] = []
     notes: list[str] = []
     for query in config.get("queries", [])[:4]:
+        if _expired(deadline):
+            notes.append("deadline")
+            break
         page = _get_text(
-            "https://www.google.com/search?num=20&q=" + urllib.parse.quote(query)
+            "https://www.google.com/search?num=20&q=" + urllib.parse.quote(query),
+            deadline=deadline,
         )
         if not page:
             notes.append("fetch failed")
@@ -241,15 +301,19 @@ def crawl_google(config: dict) -> dict:
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
-def crawl_youtube(config: dict) -> dict:
+def crawl_youtube(config: dict, deadline: float | None = None) -> dict:
     """YouTube 渠道：搜索页找视频，视频页简介里常有订阅链接。"""
     uris: list[str] = []
     urls: list[str] = []
     notes: list[str] = []
     max_videos = int(config.get("max_videos_per_query", 3))
     for query in config.get("queries", [])[:3]:
+        if _expired(deadline):
+            notes.append("deadline")
+            break
         page = _get_text(
-            "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
+            "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query),
+            deadline=deadline,
         )
         if not page:
             notes.append("search failed")
@@ -259,7 +323,9 @@ def crawl_youtube(config: dict) -> dict:
             if video_id not in video_ids:
                 video_ids.append(video_id)
         for video_id in video_ids[:max_videos]:
-            watch = _get_text(f"https://www.youtube.com/watch?v={video_id}")
+            if _expired(deadline):
+                break
+            watch = _get_text(f"https://www.youtube.com/watch?v={video_id}", deadline=deadline)
             if not watch:
                 continue
             found_uris, found_urls = extract_candidates(watch)
@@ -268,7 +334,7 @@ def crawl_youtube(config: dict) -> dict:
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
-def crawl_x(config: dict) -> dict:
+def crawl_x(config: dict, deadline: float | None = None) -> dict:
     """X 渠道：配置的公开账号走 syndication 时间线（免登录）；未配置则跳过。"""
     uris: list[str] = []
     urls: list[str] = []
@@ -277,8 +343,12 @@ def crawl_x(config: dict) -> dict:
     if not users:
         return {"uris": [], "urls": [], "notes": ["no users configured"]}
     for user in users:
+        if _expired(deadline):
+            notes.append("deadline")
+            break
         data = _get_json(
-            f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{user}"
+            f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{user}",
+            deadline=deadline,
         )
         if not data:
             notes.append(f"{user}: fetch failed")
@@ -318,6 +388,7 @@ def _url_priority(url: str) -> int:
 def run_discovery(config: dict, deadline_seconds: int = 180) -> dict:
     """按配置跑全部启用渠道，返回 {uris, urls, channels: 每渠道统计}。"""
     started = time.monotonic()
+    deadline = started + deadline_seconds
     all_uris: list[str] = []
     all_urls: list[str] = []
     channel_stats: dict[str, dict] = {}
@@ -332,9 +403,9 @@ def run_discovery(config: dict, deadline_seconds: int = 180) -> dict:
             continue
         try:
             if name == "github":
-                result = crawler(channel_config, token)
+                result = crawler(channel_config, token, deadline)
             else:
-                result = crawler(channel_config)
+                result = crawler(channel_config, deadline)
         except Exception as exc:  # 渠道实现 bug 也不许拖垮主流程
             channel_stats[name] = {"error": type(exc).__name__}
             continue

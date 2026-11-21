@@ -392,7 +392,8 @@ class CnTierTests(unittest.TestCase):
         self.assertEqual(tiers.count(0), 140)
         self.assertEqual(tiers.count(1), 20)
         self.assertEqual(tiers.count(2), 40)
-        self.assertEqual(len(udp_short), 0)
+        # UDP 名额已开启（SPEED_UDP_LIMIT=40）：25 个候选应全部入选。
+        self.assertEqual(len(udp_short), 25)
 
     def test_shortlist_backfills_from_c_when_ab_short(self):
         alive = []

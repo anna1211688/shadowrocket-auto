@@ -7,6 +7,7 @@ import base64
 import ipaddress
 import json
 import os
+import secrets
 import socket
 import subprocess
 import tempfile
@@ -31,6 +32,9 @@ SPEED_TEST_TOTAL_SECONDS = 600
 SPEED_TEST_BYTES = 262144
 SPEED_TEST_SAMPLES = 2
 SPEED_TEST_TIMEOUT = 12
+# 单个节点的绝对截止（秒）：所有地址尝试、采样与出口探测共享这一份
+# 预算，杜绝滴流节点把整轮测速拖死（审查整改，2026-11-21）。
+NODE_TEST_DEADLINE_SECONDS = 45
 DOWNLOAD_URL = f"https://speed.cloudflare.com/__down?bytes={SPEED_TEST_BYTES}"
 
 
@@ -396,23 +400,60 @@ def _probe_egress_ip(opener) -> str | None:
 
 
 def measure_node(uri, binary):
+    """测一个节点：DNS 校验过的地址逐个尝试，直到连通或用完。
+
+    每个节点有绝对截止 NODE_TEST_DEADLINE_SECONDS：单次 socket 超时
+    只是空闲超时，慢慢滴数据的节点曾能把整轮测速拖到被工作流强杀；
+    现在每阶段都用剩余时间收紧，过期即放弃。首个地址连不上时换下一
+    个已校验地址（首地址 IPv6 不通、次地址可用的情况不再误杀）。
+    """
     started = time.monotonic()
-    stage = "build_outbound"
+    deadline = started + NODE_TEST_DEADLINE_SECONDS
     try:
         outbound = build_outbound(uri)
     except UnsupportedNode as exc:
-        return {"status": "unsupported", "stage": stage, "reason": str(exc)}
+        return {"status": "unsupported", "stage": "build_outbound", "reason": str(exc)}
 
-    process = None
     try:
-        stage = "dns_validation"
         _, original_host, _ = collector.get_endpoint(uri)
         addresses = collector.resolve_public_addresses(original_host)
-        if not addresses:
-            return {"status": "dns_rejected", "stage": stage, "reason": "no_validated_public_address"}
-        outbound["server"] = addresses[0][4][0]
+    except Exception as exc:
+        return {"status": "download_failed", "stage": "dns_validation",
+                **_exception_diagnostic(exc)}
+    if not addresses:
+        return {"status": "dns_rejected", "stage": "dns_validation",
+                "reason": "no_validated_public_address"}
+    candidate_ips: list[str] = []
+    for entry in addresses:
+        ip = entry[4][0]
+        if ip not in candidate_ips:
+            candidate_ips.append(ip)
+    last_result: dict = {}
+    for ip in candidate_ips[:3]:
+        if time.monotonic() >= deadline:
+            return {"status": "download_failed", "stage": "node_deadline",
+                    "reason": "node_deadline_exceeded"}
+        attempt_outbound = dict(outbound)
+        attempt_outbound["server"] = ip
+        result = _attempt_download(uri, attempt_outbound, binary, started, deadline)
+        if result.get("status") == "ok":
+            return result
+        last_result = result
+        # 只有连接层失败才值得换地址重试；协议/内容层失败换地址也没用。
+        if result.get("status") not in ("handshake_failed", "proxy_connect_failed"):
+            return result
+    return last_result
 
+
+def _attempt_download(uri, outbound, binary, started, deadline):
+    process = None
+    stage = "config_check"
+    try:
         port = _free_port()
+        # 回环入站设随机凭据：防止本机其他进程（或抢占了端口的另一个
+        # sing-box）冒充本节点出网，也避免测速结果张冠李戴。
+        local_user = "sb" + secrets.token_hex(4)
+        local_pass = secrets.token_hex(8)
         config = {
             "log": {"disabled": False, "level": "warn", "timestamp": False},
             "inbounds": [{
@@ -420,6 +461,7 @@ def measure_node(uri, binary):
                 "tag": "local-in",
                 "listen": "127.0.0.1",
                 "listen_port": port,
+                "users": [{"username": local_user, "password": local_pass}],
             }],
             "outbounds": [outbound],
             "route": {"final": "proxy"},
@@ -430,7 +472,6 @@ def measure_node(uri, binary):
             config_path.write_text(json.dumps(config), encoding="utf-8")
             os.chmod(config_path, 0o600)
 
-            stage = "config_check"
             check = subprocess.run(
                 [binary, "check", "-c", str(config_path)],
                 capture_output=True, text=True, timeout=4,
@@ -448,7 +489,7 @@ def measure_node(uri, binary):
                     [binary, "run", "-c", str(config_path)],
                     stdout=subprocess.DEVNULL, stderr=stderr_file,
                 )
-                if not _wait_local(port, process):
+                if not _wait_local(port, process) or process.poll() is not None:
                     stderr_file.flush()
                     stderr_file.seek(0)
                     diagnostic = _singbox_error_kind(stderr_file.read())
@@ -458,13 +499,18 @@ def measure_node(uri, binary):
                         "reason": diagnostic,
                     }
 
-                proxy = urllib.request.ProxyHandler({
-                    "http": f"http://127.0.0.1:{port}",
-                    "https": f"http://127.0.0.1:{port}",
-                })
+                proxy_url = (
+                    f"http://{urllib.parse.quote(local_user, safe='')}:"
+                    f"{urllib.parse.quote(local_pass, safe='')}@127.0.0.1:{port}"
+                )
+                proxy = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
                 opener = urllib.request.build_opener(proxy)
                 rates = []
                 for sample_index in range(SPEED_TEST_SAMPLES):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {"status": "download_failed", "stage": "node_deadline",
+                                "reason": "node_deadline_exceeded"}
                     request = urllib.request.Request(
                         DOWNLOAD_URL,
                         headers={"User-Agent": "shadowrocket-auto-speedtest/1.0", "Cache-Control": "no-cache"},
@@ -472,7 +518,7 @@ def measure_node(uri, binary):
                     sample_start = time.monotonic()
                     stage = "proxy_tunnel_connect"
                     try:
-                        response = opener.open(request, timeout=SPEED_TEST_TIMEOUT)
+                        response = opener.open(request, timeout=min(SPEED_TEST_TIMEOUT, remaining))
                     except Exception as exc:
                         diagnostic = _exception_diagnostic(exc)
                         stderr_file.flush()
@@ -494,8 +540,16 @@ def measure_node(uri, binary):
                                 "http_status": int(response.status),
                             }
                         stage = "proxy_download_read"
+                        payload = bytearray()
                         try:
-                            payload = response.read(SPEED_TEST_BYTES + 1)
+                            while len(payload) <= SPEED_TEST_BYTES:
+                                if time.monotonic() >= deadline:
+                                    return {"status": "download_failed", "stage": "node_deadline",
+                                            "reason": "node_deadline_exceeded"}
+                                chunk = response.read(min(65536, SPEED_TEST_BYTES + 1 - len(payload)))
+                                if not chunk:
+                                    break
+                                payload.extend(chunk)
                         except Exception as exc:
                             diagnostic = _exception_diagnostic(exc)
                             stderr_file.flush()
@@ -541,6 +595,7 @@ def measure_node(uri, binary):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
+
 
 def _balanced_speed_shortlist(nodes, limit):
     """Round-robin protocols so one popular protocol cannot consume every test slot."""

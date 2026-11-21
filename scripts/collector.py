@@ -616,7 +616,10 @@ def cdn_fronted(line: str) -> bool:
 FRONTED_TCP_QUOTA = 100
 TIER_TCP_QUOTAS = {0: 40, 1: 20, 2: 40}
 SPEED_TCP_LIMIT = 200
-SPEED_UDP_LIMIT = 0
+# UDP 曾为 0（2026-11-20 停用，当时判定验证通过率极低）；审查发现这让
+# HY2/TUIC 永远进不了订阅、每轮上百个 UDP 候选白白流过（2026-11-21
+# 整改开启 40 个名额，先看真实入选与深圳实测再调整）。
+SPEED_UDP_LIMIT = 40
 
 # 存活时长信号（2026-11-20 晚定）：深圳实测对照显示，小而稳定的
 # Pawdroid 订阅 9 个节点有 6 个可用，而我们每小时按「刚测速通过」
@@ -748,8 +751,10 @@ def update_discovered_sources(stored: dict, fetch_results: dict, rediscovered: s
     stamp = now.isoformat()
     updated = {url: dict(entry) for url, entry in stored.items() if isinstance(entry, dict)}
     for url in rediscovered:
-        entry = updated.setdefault(url, {"f": stamp, "l": stamp, "ok": 0, "empty": 0})
-        entry["l"] = stamp
+        # 只有新建条目给时间戳；已存条目的 l 只由真实抓取刷新——此前
+        # 「被再次发现」也刷新 l，没被抓取额度选中的源永远不会过期，
+        # 还会挤占新发现源的抓取位置（审查整改，2026-11-21）。
+        updated.setdefault(url, {"f": stamp, "l": stamp, "ok": 0, "empty": 0})
     for url, count in fetch_results.items():
         entry = updated.setdefault(url, {"f": stamp, "l": stamp, "ok": 0, "empty": 0})
         entry["l"] = stamp
@@ -785,9 +790,13 @@ def update_node_history(history: dict, alive_lines, passed_lines, now: datetime.
         entry["l"] = stamp
         entry["a"] = entry.get("a", 0) + 1
     for line in set(passed_lines):
-        entry = updated.get(history_key(line))
-        if entry is not None:
-            entry["p"] = entry.get("p", 0) + 1
+        # 通过测速的节点直接建条目：UDP 节点不走 TCP 测活、没有 alive
+        # 记录，此前永远建不了条目、攒不了老兵资格（审查整改）。
+        entry = updated.setdefault(
+            history_key(line), {"f": stamp, "l": stamp, "a": 0, "p": 0}
+        )
+        entry["l"] = stamp
+        entry["p"] = entry.get("p", 0) + 1
     cutoff = now - datetime.timedelta(days=HISTORY_PRUNE_DAYS)
     pruned = {}
     for key, entry in updated.items():
@@ -884,7 +893,22 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
         tcp_shortlist.extend(
             _round_robin_by_protocol(leftover, SPEED_TCP_LIMIT - len(tcp_shortlist))
         )
-    return tcp_shortlist, _rotate(udp_candidates, rng)[:SPEED_UDP_LIMIT]
+    # UDP 名单：保送源节点与老兵优先（与 TCP 侧同一存活逻辑），其余
+    # 按小时种子轮换，让新面孔也有被测到的机会。
+    def udp_pref_rank(line: str) -> tuple:
+        record = history.get(history_key(line)) or {}
+        return (-record.get("p", 0), -record.get("a", 0))
+
+    udp_preferred = [
+        line for line in udp_candidates
+        if history_key(line) in priority_keys
+        or is_veteran(history.get(history_key(line)), now)
+    ]
+    udp_preferred.sort(key=udp_pref_rank)
+    udp_preferred_lines = set(udp_preferred)
+    udp_rest = [line for line in udp_candidates if line not in udp_preferred_lines]
+    udp_shortlist = (udp_preferred + _rotate(udp_rest, rng))[:SPEED_UDP_LIMIT]
+    return tcp_shortlist, udp_shortlist
 
 
 def dedupe_by_endpoint(nodes: list[tuple]) -> list[tuple]:
@@ -1372,6 +1396,13 @@ def main():
     # 1b. 源发现：从公开渠道找新订阅地址与散装节点；发现到的订阅地址
     # 仍须过源白名单才抓取，存活下来的发现源跨轮保存在质量报告里。
     discovered_state = load_discovered_sources()
+    # 与正式源/保送源重复的发现源条目直接剔除：此前 Pawdroid 同时以
+    # 正式源和发现源身份被重复抓取、占一份抓取额度（审查整改）。
+    configured_urls = set(sources) | load_priority_sources()
+    discovered_state = {
+        url: entry for url, entry in discovered_state.items()
+        if url not in configured_urls
+    }
     discovery_stats: dict = {}
     discovered_uris: list[str] = []
     fetch_urls: list[str] = []
@@ -1384,11 +1415,19 @@ def main():
             from .discovery import run_discovery
         found = run_discovery(discovery_config)
         discovered_uris = found["uris"]
-        allowed_urls = [url for url in found["urls"] if is_allowed_source_url(url)]
+        allowed_urls = [
+            url for url in found["urls"]
+            if is_allowed_source_url(url) and url not in configured_urls
+        ]
         stored_urls = sorted(
             discovered_state, key=lambda url: -discovered_state[url].get("ok", 0)
         )
-        fetch_urls = list(dict.fromkeys(stored_urls + allowed_urls))[:DISCOVERED_MAX_FETCH]
+        # 本轮新发现的源排在前面先抓：此前老源按 ok 排序长期霸占抓取
+        # 额度，新源排不进来、又因未抓取无法证明自己（审查整改）。
+        fresh_urls = [url for url in allowed_urls if url not in discovered_state]
+        fetch_urls = list(
+            dict.fromkeys(fresh_urls + stored_urls + allowed_urls)
+        )[:DISCOVERED_MAX_FETCH]
         sources.extend(fetch_urls)
         discovery_stats = {
             "channels": found["channels"],
@@ -1508,7 +1547,12 @@ def main():
         raise RuntimeError("sing-box binary unavailable; refusing to publish a latency-only ranking")
 
     print(f"开始真实代理隧道下载测速：TCP {len(tcp_shortlist)} 个，UDP {len(udp_shortlist)} 个")
-    successful_speed_nodes, speed_results = rank_by_speed(speed_shortlist, binary)
+    # limit 显式放行整份短名单：rank_by_speed 的默认上限 200 且带协
+    # 议均衡重排，TCP 200 + UDP 40 的名单会被它砍掉尾部并打乱配额
+    # （审查整改，2026-11-21）。
+    successful_speed_nodes, speed_results = rank_by_speed(
+        speed_shortlist, binary, limit=len(speed_shortlist)
+    )
     stats["proxy_speed_candidates_considered"] = len(speed_results)
     stats["proxy_speed_unsupported"] = sum(
         1 for _, result in speed_results if result.get("status") == "unsupported"

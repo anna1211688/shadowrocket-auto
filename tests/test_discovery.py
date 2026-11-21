@@ -107,3 +107,62 @@ class DiscoveredSourceStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewSchemeExtractionTests(unittest.TestCase):
+    """审查整改：发现层补齐 collector 已支持的协议提取。"""
+
+    def test_hysteria_and_anytls_loose_uris(self):
+        uris, _ = discovery.extract_candidates(
+            "hysteria://auth@h1.example:443?peer=sni.example#n1 "
+            "anytls://pw@h2.example:8443?sni=s.example#n2"
+        )
+        self.assertEqual(len(uris), 2)
+
+    def test_http_proxy_shape_goes_to_uris_not_urls(self):
+        uris, urls = discovery.extract_candidates(
+            "节点 http://user:pass@192.0.2.5:8080 订阅 https://example.com/sub.txt "
+            "裸代理 https://192.0.2.6:8443"
+        )
+        self.assertIn("http://user:pass@192.0.2.5:8080", uris)
+        self.assertIn("https://192.0.2.6:8443", uris)
+        self.assertEqual(urls, ["https://example.com/sub.txt"])
+
+
+class _FakeResp:
+    def __init__(self, status=200, chunks=()):
+        self.status_code = status
+        self._chunks = chunks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def iter_content(self, chunk_size=16384):
+        yield from self._chunks
+
+
+class FetchGuardTests(unittest.TestCase):
+    """审查整改：不跟随重定向；JSON 与文本共用字节上限。"""
+
+    def test_redirect_is_not_followed(self):
+        with unittest.mock.patch.object(
+            discovery.requests, "get", return_value=_FakeResp(status=301)
+        ):
+            self.assertIsNone(discovery._get_text("https://t.me/s/x"))
+
+    def test_oversized_json_rejected(self):
+        big = b"x" * (discovery.MAX_TEXT_BYTES + 1)
+        with unittest.mock.patch.object(
+            discovery.requests, "get", return_value=_FakeResp(chunks=[big])
+        ):
+            self.assertIsNone(discovery._get_json("https://api.github.com/x"))
+
+    def test_small_json_ok(self):
+        with unittest.mock.patch.object(
+            discovery.requests, "get",
+            return_value=_FakeResp(chunks=[b'{"a": 1}']),
+        ):
+            self.assertEqual(discovery._get_json("https://api.github.com/x"), {"a": 1})

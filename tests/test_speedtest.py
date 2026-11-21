@@ -206,3 +206,116 @@ class ParallelRankTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes, status: int = 200):
+        self._body = body
+        self.status = status
+        self._pos = 0
+
+    def read(self, n: int = -1) -> bytes:
+        if self._pos >= len(self._body):
+            return b""
+        if n is None or n < 0:
+            n = len(self._body) - self._pos
+        chunk = self._body[self._pos:self._pos + n]
+        self._pos += len(chunk)
+        return chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.terminated = False
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+class MeasureNodeMockTests(unittest.TestCase):
+    """measure_node 的进程/网络全用替身：覆盖 DNS 拒绝、完整成功
+    （含出口探测与进程回收）、首地址失败后故障转移到第二个地址。"""
+
+    URI = "vless://12345678-1234-1234-1234-123456789012@node.example:443?security=tls#t"
+
+    def _addr(self, ip):
+        import socket as _socket
+        return (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, 443))
+
+    def test_dns_rejected_when_no_public_address(self):
+        with unittest.mock.patch(
+            "scripts.collector.resolve_public_addresses", return_value=[]
+        ):
+            result = speedtest.measure_node(self.URI, "/fake/sing-box")
+        self.assertEqual(result["status"], "dns_rejected")
+
+    def _run_with_opener(self, opener, addresses, wait_local_results=None):
+        processes = []
+
+        def fake_popen(*args, **kwargs):
+            proc = _FakeProcess()
+            processes.append(proc)
+            return proc
+
+        wait_iter = iter(wait_local_results or [True])
+        with unittest.mock.patch(
+            "scripts.collector.resolve_public_addresses", return_value=addresses
+        ), unittest.mock.patch.object(
+            speedtest.subprocess, "run",
+            return_value=unittest.mock.Mock(returncode=0, stderr="", stdout=""),
+        ), unittest.mock.patch.object(
+            speedtest.subprocess, "Popen", side_effect=fake_popen
+        ), unittest.mock.patch.object(
+            speedtest, "_wait_local", side_effect=lambda port, proc: next(wait_iter)
+        ), unittest.mock.patch.object(
+            speedtest.urllib.request, "build_opener", return_value=opener
+        ):
+            result = speedtest.measure_node(self.URI, "/fake/sing-box")
+        return result, processes
+
+    def test_successful_measurement_with_egress_probe(self):
+        payload = b"x" * speedtest.SPEED_TEST_BYTES
+
+        class Opener:
+            def open(self, request, timeout=None):
+                url = getattr(request, "full_url", str(request))
+                if "cdn-cgi/trace" in url:
+                    return _FakeResponse(b"ip=203.0.113.9\nloc=NL\n")
+                return _FakeResponse(payload)
+
+        result, processes = self._run_with_opener(Opener(), [self._addr("192.0.2.10")])
+        self.assertEqual(result["status"], "ok")
+        self.assertGreater(result["download_mbps"], 0)
+        self.assertEqual(result["egress_ip"], "203.0.113.9")
+        self.assertTrue(processes and processes[0].terminated)
+
+    def test_failover_to_second_address(self):
+        payload = b"x" * speedtest.SPEED_TEST_BYTES
+
+        class Opener:
+            def open(self, request, timeout=None):
+                return _FakeResponse(payload)
+
+        # 第一次 _wait_local 失败（handshake_failed，可重试）→ 换第二个地址成功。
+        result, processes = self._run_with_opener(
+            Opener(),
+            [self._addr("192.0.2.10"), self._addr("192.0.2.11")],
+            wait_local_results=[False, True],
+        )
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(processes), 2)
