@@ -842,9 +842,10 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
 
     两晚深圳实测（2026-11-21/22）的两条规律，只作用于发布选择，
     采集/测速/历史不动：
-    1. VLESS Vision/GRPC：活下来的全是住宅/移动出口或认证网段的，
-       机房与未测出口的整批超时——未达标者只留排序最靠前的
-       VISION_EXPLORATION_SLOTS 个探索位，给新服务留证明机会；
+    1. VLESS Vision/GRPC：活下来的全部出自认证网段；「住宅/移动
+       出口」豁免曾保留过五晚，段外住宅 Vision 累计约 1/13——
+       2026-11-22 第五晚后取消豁免，未认证者不论出口类型只留
+       排序最靠前的 VISION_EXPLORATION_SLOTS 个探索位；
     2. HY2：四晚合计存活约 3/42，是白名单类型里唯一持续整批
        超时的——封顶 HY2_SUBSCRIPTION_CAP 个（探索位级别），
        认证网段内的不占名额（实测证明能活的段不受误伤）；
@@ -861,8 +862,7 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
              "ss_exploration_dropped": 0}
     for uri, result in ranked_nodes:
         if _is_vless_vision_or_grpc(uri):
-            qualified = (result.get("egress_type") in ("residential", "mobile")
-                         or is_field_verified(uri, field_networks))
+            qualified = is_field_verified(uri, field_networks)
             if qualified:
                 kept.append((uri, result))
             elif vision_explore_used < VISION_EXPLORATION_SLOTS:

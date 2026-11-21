@@ -744,9 +744,9 @@ class FieldEvidenceShapingTests(unittest.TestCase):
         nodes += [self._vision(f"198.51.100.{10 + i}", "datacenter") for i in range(6)]
         nodes.append(self._vision("203.0.113.7", None))
         kept, stats = collector.apply_field_evidence_shaping(nodes, [])
-        # 住宅 1 个全留；未达标共 7 个只留 3 个探索位。
-        self.assertEqual(len(kept), 4)
-        self.assertEqual(stats["vision_exploration_dropped"], 4)
+        # 出口豁免已取消：无认证段时 8 个全是未达标，只留 3 个探索位。
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(stats["vision_exploration_dropped"], 5)
         self.assertEqual(kept[0][1]["egress_type"], "residential")
 
     def test_vision_in_verified_network_is_qualified(self):
