@@ -809,6 +809,7 @@ def _is_vless_vision_or_grpc(uri: str) -> bool:
 
 # 大陆实测整形参数（2026-11-21/22 两晚深圳实测的量化结论）。
 VISION_EXPLORATION_SLOTS = 3   # 未达标 Vision/GRPC 每轮保留的探索位
+SS_EXPLORATION_SLOTS = 3       # 未认证 SS 每轮保留的探索位
 HY2_SUBSCRIPTION_CAP = 3       # HY2 在订阅中的封顶（认证网段不占名额）
 
 
@@ -820,15 +821,20 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
     1. VLESS Vision/GRPC：活下来的全是住宅/移动出口或认证网段的，
        机房与未测出口的整批超时——未达标者只留排序最靠前的
        VISION_EXPLORATION_SLOTS 个探索位，给新服务留证明机会；
-    2. HY2：三晚合计存活约 3/39、最近两晚 0/22，是白名单类型里
-       唯一持续整批超时的——封顶 HY2_SUBSCRIPTION_CAP 个（探索位
-       级别），认证网段内的不占名额（实测证明能活的段不受误伤）。
-    SS/SOCKS5 的实测表现与现有排序已经对齐，不动。
+    2. HY2：四晚合计存活约 3/42，是白名单类型里唯一持续整批
+       超时的——封顶 HY2_SUBSCRIPTION_CAP 个（探索位级别），
+       认证网段内的不占名额（实测证明能活的段不受误伤）；
+    3. SS：存活者全部出自认证网段，未认证 SS 四晚合计约 1/23
+       （含住宅出口，照样整批超时）——未认证者只留排序最靠前的
+       SS_EXPLORATION_SLOTS 个探索位。SOCKS5 不动：四晚约 12/13
+       存活且不挑网段，是唯一不需要门槛的类别。
     """
     kept = []
     vision_explore_used = 0
+    ss_explore_used = 0
     hy2_kept = 0
-    stats = {"vision_exploration_dropped": 0, "hy2_capped": 0}
+    stats = {"vision_exploration_dropped": 0, "hy2_capped": 0,
+             "ss_exploration_dropped": 0}
     for uri, result in ranked_nodes:
         if _is_vless_vision_or_grpc(uri):
             qualified = (result.get("egress_type") in ("residential", "mobile")
@@ -849,6 +855,15 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
                 kept.append((uri, result))
             else:
                 stats["hy2_capped"] += 1
+            continue
+        if get_protocol(uri) == "ss":
+            if is_field_verified(uri, field_networks):
+                kept.append((uri, result))
+            elif ss_explore_used < SS_EXPLORATION_SLOTS:
+                ss_explore_used += 1
+                kept.append((uri, result))
+            else:
+                stats["ss_exploration_dropped"] += 1
             continue
         kept.append((uri, result))
     return kept, stats

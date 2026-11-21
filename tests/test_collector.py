@@ -919,3 +919,19 @@ class ByxiaoxiTests(unittest.TestCase):
         self.assertTrue(any(u.startswith("ss://") for u in uris))
         vless = [u for u in uris if u.startswith("vless://")][0]
         self.assertIn("&type=ws", vless)  # &amp; 已还原
+
+    def test_ss_gate_unverified_exploration(self):
+        def ss(host):
+            import base64 as _b64
+            ui = _b64.b64encode(b"aes-256-gcm:pw").decode()
+            return (f"ss://{ui}@{host}:8388#s",
+                    {"download_mbps": 5.0, "egress_type": "datacenter"})
+        nodes = [ss(f"198.51.100.{i}") for i in range(1, 6)]
+        nodes.append(ss("202.50.253.99"))  # 认证段内
+        import ipaddress as _ip
+        nets = [_ip.ip_network("202.50.253.0/24")]
+        kept, stats = collector.apply_field_evidence_shaping(nodes, nets)
+        kept_uris = [u for u, _ in kept]
+        self.assertIn(nodes[-1][0], kept_uris)       # 认证 SS 全保
+        self.assertEqual(len(kept), 1 + collector.SS_EXPLORATION_SLOTS)
+        self.assertEqual(stats["ss_exploration_dropped"], 2)
