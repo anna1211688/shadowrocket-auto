@@ -169,7 +169,7 @@ def clash_proxy_to_uri(proxy) -> str | None:
             return None
         userinfo = base64.b64encode(f"{cipher}:{pw}".encode()).decode()
         return f"ss://{userinfo}@{host_port}#{frag}"
-    if ptype in ("socks5", "http"):
+    if ptype in ("socks5", "socks", "http"):
         user, pw = proxy.get("username"), proxy.get("password")
         auth = ""
         if user:
@@ -177,7 +177,9 @@ def clash_proxy_to_uri(proxy) -> str | None:
             if pw is not None:
                 auth += ":" + urllib.parse.quote(str(pw))
             auth += "@"
-        return f"{ptype}://{auth}{host_port}#{frag}"
+        scheme = "socks5" if ptype in ("socks5", "socks") else (
+            "https" if proxy.get("tls") else "http")
+        return f"{scheme}://{auth}{host_port}#{frag}"
     if ptype == "trojan":
         pw = proxy.get("password")
         if pw is None:
@@ -228,6 +230,28 @@ def clash_proxy_to_uri(proxy) -> str | None:
                  "obfs": proxy.get("obfs"),
                  "obfs-password": proxy.get("obfs-password")}
         return f"hysteria2://{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
+    if ptype == "hysteria":
+        # Hysteria v1：测速器期望 auth/peer/upmbps 等查询参数格式。
+        def _mbps(value):
+            if value is None:
+                return None
+            try:
+                return str(int(float(str(value).split()[0])))
+            except (ValueError, IndexError):
+                return None
+        query = {"auth": proxy.get("auth_str") or proxy.get("auth-str"),
+                 "peer": proxy.get("sni") or proxy.get("servername"),
+                 "upmbps": _mbps(proxy.get("up")),
+                 "downmbps": _mbps(proxy.get("down")),
+                 "obfsParam": proxy.get("obfs"),
+                 "insecure": "1" if proxy.get("skip-cert-verify") else None}
+        return f"hysteria://{host_port}?{params(**query)}#{frag}"
+    if ptype == "anytls":
+        pw = proxy.get("password")
+        if pw is None:
+            return None
+        query = {"sni": proxy.get("sni") or proxy.get("servername")}
+        return f"anytls://{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
     if ptype == "tuic":
         uuid, pw = proxy.get("uuid"), proxy.get("password")
         if not uuid or pw is None:
@@ -1822,7 +1846,18 @@ def byxiaoxi_post_to_uris(post_html: str) -> list[str]:
 
 
 def resolve_byxiaoxi_nodes(now: datetime.datetime) -> list[str]:
-    """定位小汐搬运最新帖子并提取节点；任何一步失败返回已得部分。"""
+    """定位小汐搬运最新帖子并提取节点；任何一步失败返回已得部分。
+
+    顶层异常兜底与 FreeClashNode 解析器对齐：解析器内部任何未预料
+    的错误都不许冒泡进主流程、拖垮整轮采集。
+    """
+    try:
+        return _resolve_byxiaoxi_nodes(now)
+    except Exception:
+        return []
+
+
+def _resolve_byxiaoxi_nodes(now: datetime.datetime) -> list[str]:
     channel_html = _fetch_text(BYXIAOXI_CHANNEL_URL)
     if not channel_html:
         return []
@@ -2115,9 +2150,10 @@ def main():
     # 大陆实测整形：Vision 出口门槛 + HY2 封顶（见整形函数的实测依据）。
     ranked_nodes, shaping_stats = apply_field_evidence_shaping(ranked_nodes, field_networks)
     stats.update(shaping_stats)
-    if shaping_stats["vision_exploration_dropped"] or shaping_stats["hy2_capped"]:
+    if any(shaping_stats.values()):
         print(f"大陆实测整形：未达标 Vision 超探索位滤除 {shaping_stats['vision_exploration_dropped']} 个、"
-              f"HY2 超封顶滤除 {shaping_stats['hy2_capped']} 个，保留 {len(ranked_nodes)} 个")
+              f"HY2 超封顶滤除 {shaping_stats['hy2_capped']} 个、"
+              f"未认证 SS 超探索位滤除 {shaping_stats['ss_exploration_dropped']} 个，保留 {len(ranked_nodes)} 个")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
     stats["field_verified"] = sum(1 for uri in selected if is_field_verified(uri, field_networks))
     print("订阅排序（前置 / 档位 / Mbps）:")

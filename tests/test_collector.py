@@ -935,3 +935,30 @@ class ByxiaoxiTests(unittest.TestCase):
         self.assertIn(nodes[-1][0], kept_uris)       # 认证 SS 全保
         self.assertEqual(len(kept), 1 + collector.SS_EXPLORATION_SLOTS)
         self.assertEqual(stats["ss_exploration_dropped"], 2)
+
+    def test_hysteria_anytls_socks_mapping(self):
+        sample = """
+proxies:
+  - {name: hy1, server: 203.0.113.20, port: 443, type: hysteria, auth_str: pw1, sni: a.com, up: 50, down: '100 Mbps'}
+  - {name: at, server: 203.0.113.21, port: 443, type: anytls, password: pw2, sni: b.com}
+  - {name: sk, server: 203.0.113.22, port: 1080, type: socks, username: u, password: p}
+"""
+        uris = collector.clash_yaml_to_uris(sample)
+        self.assertEqual(len(uris), 3)
+        hy1 = [u for u in uris if u.startswith("hysteria://")][0]
+        self.assertIn("auth=pw1", hy1)
+        self.assertIn("peer=a.com", hy1)
+        self.assertIn("downmbps=100", hy1)
+        self.assertTrue(any(u.startswith("anytls://pw2@") for u in uris))
+        self.assertTrue(any(u.startswith("socks5://u:p@") for u in uris))
+
+    def test_byxiaoxi_resolve_swallows_exceptions(self):
+        import datetime as _dt
+        original = collector._fetch_text
+        collector._fetch_text = lambda url: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            self.assertEqual(
+                collector.resolve_byxiaoxi_nodes(
+                    _dt.datetime.now(_dt.timezone.utc)), [])
+        finally:
+            collector._fetch_text = original
