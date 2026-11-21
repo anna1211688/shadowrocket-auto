@@ -1,8 +1,8 @@
 # Shadowrocket-auto 订阅源列表
 # 每行一个 URL，支持 # 注释
-# 默认仅 raw.githubusercontent.com（采集器安全限制）；两个经逐个批准
-# 的例外主机（aa.mibei77.com、tian.zmxoo.xyz）记在代码
-# EXTRA_SOURCE_HOSTS 里，不开放通配。
+# 默认仅 raw.githubusercontent.com（采集器安全限制）；经逐个批准
+# 的例外主机记在代码 EXTRA_SOURCE_HOSTS 里（米贝、zmxoo、
+# FreeClashNode、小汐搬运博客与 t.me 频道页），不开放通配。
 # 更新时间: 2026-11-21
 
 # ===== 核心稳定源 =====

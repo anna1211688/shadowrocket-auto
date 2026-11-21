@@ -891,3 +891,31 @@ proxies:
     def test_garbage_yaml_returns_empty(self):
         self.assertEqual(collector.clash_yaml_to_uris("proxies: [unclosed"), [])
         self.assertEqual(collector.clash_yaml_to_uris("no proxies here"), [])
+
+
+class ByxiaoxiTests(unittest.TestCase):
+    """小汐搬运解析器：帖子定位（最新优先、保尾斜杠）与 HTML 提取。"""
+
+    CHANNEL = """
+    <a href="https://blog.banyunxiaoxi.icu/2026/11/20/2026-11-20-post/">old</a>
+    <a href="https://blog.banyunxiaoxi.icu/2026/11/21/2026-11-21-post/">new</a>
+    <a href="https://blog.banyunxiaoxi.icu/2026/11/21/2026-11-21-post/">dup</a>
+    """
+
+    def test_post_urls_newest_first_keep_trailing_slash(self):
+        posts = collector.extract_byxiaoxi_post_urls(self.CHANNEL)
+        self.assertEqual(len(posts), 2)
+        self.assertIn("2026-11-21", posts[0])
+        self.assertTrue(posts[0].endswith("/"))
+
+    def test_post_html_to_uris(self):
+        page = """
+        <p>ss://YWVzLTI1Ni1nY206cHc@203.0.113.10:8388#node1</p>
+        <code>vless://11111111-2222-3333-4444-555555555555@203.0.113.11:443?security=tls&amp;type=ws</code>
+        <p>ss://YWVzLTI1Ni1nY206cHc@203.0.113.10:8388#node1</p>
+        """
+        uris = collector.byxiaoxi_post_to_uris(page)
+        self.assertEqual(len(uris), 2)  # 重复列示去重
+        self.assertTrue(any(u.startswith("ss://") for u in uris))
+        vless = [u for u in uris if u.startswith("vless://")][0]
+        self.assertIn("&type=ws", vless)  # &amp; 已还原

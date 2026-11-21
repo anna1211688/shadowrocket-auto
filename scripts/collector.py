@@ -2,6 +2,7 @@ import base64
 import datetime
 import ipaddress
 import hashlib
+import html
 import json
 import os
 import random
@@ -1611,7 +1612,8 @@ def test_node(line: str):
 # freeclashnode 两主机：2026-11-22 用户批准加入（普通源）。其节点
 # 文件链接带日期、每日更换，由 resolve_freeclashnode_sources 解析。
 EXTRA_SOURCE_HOSTS = {"aa.mibei77.com", "tian.zmxoo.xyz",
-                      "node.freeclashnode.com", "www.freeclashnode.com"}
+                      "node.freeclashnode.com", "www.freeclashnode.com",
+                      "blog.banyunxiaoxi.icu", "t.me"}
 
 
 def is_allowed_source_url(url: str) -> bool:
@@ -1763,6 +1765,64 @@ def resolve_freeclashnode_sources(now: datetime.datetime) -> list[str]:
     except Exception:
         return []
 
+
+# 小汐搬运（Telegram @byxiaoxi，2026-11-22 用户批准，普通源）：节点
+# 不在订阅文件里，而是嵌在它博客的每日帖子 HTML 中。解析路径：频道
+# 公开页找最新帖子地址 → 抓帖子正文 → 剥标签后提取节点 URI。
+BYXIAOXI_CHANNEL_URL = "https://t.me/s/byxiaoxi"
+_BYXIAOXI_POST_RE = re.compile(
+    r"https://blog\.banyunxiaoxi\.icu/\d{4}/\d{2}/\d{2}/[^\s\"'<>]+")
+_PROXY_URI_RE = re.compile(
+    r"(?:ss|vmess|vless|trojan|hysteria2|hy2|tuic|anytls|socks5)"
+    r"://[^\s<>\"']+")
+
+
+def extract_byxiaoxi_post_urls(channel_html: str) -> list[str]:
+    """从频道页提取博客帖子地址（新到旧、去重，最多 2 篇）。"""
+    posts: list[str] = []
+    for url in _BYXIAOXI_POST_RE.findall(channel_html or ""):
+        # 不能剥尾部斜杠：WordPress 固定链接少了它会 301，而抓取器
+        # 按纪律不跟随重定向。频道页按时间正序排列，最新在末尾。
+        url = url.rstrip(".,)")
+        if url not in posts:
+            posts.append(url)
+    return posts[-2:][::-1]
+
+
+def byxiaoxi_post_to_uris(post_html: str) -> list[str]:
+    """博客帖子 HTML → 节点 URI：先剥标签、还原实体，再按协议提取。
+
+    同一节点会在帖子里按客户端分区分重复列示，这里先去重；
+    有效性与端点去重由后续统一管线负责。
+    """
+    text = html.unescape(re.sub(r"<[^>]+>", "\n", post_html or ""))
+    uris: list[str] = []
+    for uri in _PROXY_URI_RE.findall(text):
+        uri = uri.rstrip(".,;)")
+        if uri and uri not in uris:
+            uris.append(uri)
+            if len(uris) >= MAX_SOURCE_NODES:
+                break
+    return uris
+
+
+def resolve_byxiaoxi_nodes(now: datetime.datetime) -> list[str]:
+    """定位小汐搬运最新帖子并提取节点；任何一步失败返回已得部分。"""
+    channel_html = _fetch_text(BYXIAOXI_CHANNEL_URL)
+    if not channel_html:
+        return []
+    uris: list[str] = []
+    for post_url in extract_byxiaoxi_post_urls(channel_html):
+        if not is_allowed_source_url(post_url):
+            continue
+        post_html = _fetch_text(post_url)
+        if post_html:
+            for uri in byxiaoxi_post_to_uris(post_html):
+                if uri not in uris:
+                    uris.append(uri)
+    return uris
+
+
 def main():
     run_now = datetime.datetime.now(datetime.timezone.utc)
     history = load_node_history()
@@ -1847,6 +1907,11 @@ def main():
                     raw_nodes.extend(nodes[:max(0, MAX_TOTAL_NODES - len(raw_nodes))])
     if discovered_uris:
         raw_nodes.extend(discovered_uris)
+    # 小汐搬运（普通源）：解析器直接给 URI，合并进候选池。
+    byx_uris = resolve_byxiaoxi_nodes(run_now)
+    if byx_uris:
+        raw_nodes.extend(byx_uris)
+        print(f"小汐搬运: 提取到 {len(byx_uris)} 个节点")
     if discovery_config.get("enable"):
         discovered_state = update_discovered_sources(
             discovered_state,
@@ -1858,6 +1923,7 @@ def main():
     # 3. 初步过滤 + 按端点、凭据和传输参数去重；优先候选不受上限约束。
     stats = {"ok": 0, "slow": 0, "timeout": 0, "invalid": 0, "private": 0, "duplicate": 0, "udp_unverified": 0}
     stats["freeclashnode_sources"] = len(fcn_urls)
+    stats["byxiaoxi_nodes"] = len(byx_uris)
     priority_candidates, other_candidates = collect_candidates(priority_raw_nodes, raw_nodes, stats)
     priority_keys = {history_key(line) for line in priority_candidates}
 
