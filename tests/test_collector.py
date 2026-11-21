@@ -728,3 +728,44 @@ class FieldVerifiedTests(unittest.TestCase):
         self.assertTrue(nets)
         for net in nets:
             self.assertEqual(net.prefixlen, 24)
+
+
+class FieldEvidenceShapingTests(unittest.TestCase):
+    """大陆实测整形：Vision 出口门槛 + 探索位、HY2 封顶。"""
+
+    def _vision(self, host, egress):
+        uri = (f"vless://u@{host}:443?encryption=none&flow=xtls-rprx-vision"
+               f"&security=tls&sni=x&type=tcp#v")
+        return uri, {"download_mbps": 5.0, "egress_type": egress}
+
+    def test_vision_gate_and_exploration_slots(self):
+        import ipaddress as _ip
+        nodes = [self._vision("198.51.100.1", "residential")]
+        nodes += [self._vision(f"198.51.100.{10 + i}", "datacenter") for i in range(6)]
+        nodes.append(self._vision("203.0.113.7", None))
+        kept, stats = collector.apply_field_evidence_shaping(nodes, [])
+        # 住宅 1 个全留；未达标共 7 个只留 3 个探索位。
+        self.assertEqual(len(kept), 4)
+        self.assertEqual(stats["vision_exploration_dropped"], 4)
+        self.assertEqual(kept[0][1]["egress_type"], "residential")
+
+    def test_vision_in_verified_network_is_qualified(self):
+        import ipaddress as _ip
+        nets = [_ip.ip_network("202.50.253.0/24")]
+        nodes = [self._vision(f"202.50.253.{i}", "datacenter") for i in range(1, 7)]
+        kept, stats = collector.apply_field_evidence_shaping(nodes, nets)
+        self.assertEqual(len(kept), 6)
+        self.assertEqual(stats["vision_exploration_dropped"], 0)
+
+    def test_hy2_cap_and_verified_exemption(self):
+        import ipaddress as _ip
+        nets = [_ip.ip_network("202.50.253.0/24")]
+        nodes = [(f"hysteria2://p@198.51.100.{i}:443?sni=x#h", {"download_mbps": 1.0})
+                 for i in range(1, 14)]
+        nodes.append(("hysteria2://p@202.50.253.9:443?sni=x#h", {"download_mbps": 1.0}))
+        nodes.append(("ss://eA@198.51.100.99:8388#s", {"download_mbps": 1.0}))
+        kept, stats = collector.apply_field_evidence_shaping(nodes, nets)
+        hy2_kept = [u for u, _ in kept if u.startswith("hysteria2")]
+        self.assertEqual(len(hy2_kept), collector.HY2_SUBSCRIPTION_CAP + 1)  # 封顶 10 + 认证段 1
+        self.assertEqual(stats["hy2_capped"], 3)
+        self.assertTrue(any(u.startswith("ss://") for u, _ in kept))

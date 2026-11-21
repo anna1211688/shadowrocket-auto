@@ -647,6 +647,65 @@ HISTORY_PRUNE_DAYS = 7
 HISTORY_MAX_ENTRIES = 20000
 
 
+def _is_vless_vision_or_grpc(uri: str) -> bool:
+    """VLESS 是否为 Vision 直连或 GRPC 传输（与白名单口径一致）。"""
+    if get_protocol(uri) != "vless":
+        return False
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(uri).query)
+    except ValueError:
+        return False
+    flow = (query.get("flow") or [""])[0].lower()
+    transport = (query.get("type") or [""])[0].lower()
+    return "vision" in flow or transport == "grpc"
+
+
+# 大陆实测整形参数（2026-11-21/22 两晚深圳实测的量化结论）。
+VISION_EXPLORATION_SLOTS = 3   # 未达标 Vision/GRPC 每轮保留的探索位
+HY2_SUBSCRIPTION_CAP = 10      # HY2 在订阅中的封顶（认证网段不占名额）
+
+
+def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
+    """按大陆实测证据整形发布名单，返回 (保留名单, 统计)。
+
+    两晚深圳实测（2026-11-21/22）的两条规律，只作用于发布选择，
+    采集/测速/历史不动：
+    1. VLESS Vision/GRPC：活下来的全是住宅/移动出口或认证网段的，
+       机房与未测出口的整批超时——未达标者只留排序最靠前的
+       VISION_EXPLORATION_SLOTS 个探索位，给新服务留证明机会；
+    2. HY2：两晚合计存活约 3/27、为白名单类型里最低，却常占订阅
+       三成版面——封顶 HY2_SUBSCRIPTION_CAP 个，认证网段内的
+       不占名额（实测证明能活的段不受配额误伤）。
+    SS/SOCKS5 的实测表现与现有排序已经对齐，不动。
+    """
+    kept = []
+    vision_explore_used = 0
+    hy2_kept = 0
+    stats = {"vision_exploration_dropped": 0, "hy2_capped": 0}
+    for uri, result in ranked_nodes:
+        if _is_vless_vision_or_grpc(uri):
+            qualified = (result.get("egress_type") in ("residential", "mobile")
+                         or is_field_verified(uri, field_networks))
+            if qualified:
+                kept.append((uri, result))
+            elif vision_explore_used < VISION_EXPLORATION_SLOTS:
+                vision_explore_used += 1
+                kept.append((uri, result))
+            else:
+                stats["vision_exploration_dropped"] += 1
+            continue
+        if get_protocol(uri) in ("hysteria2", "hy2"):
+            if is_field_verified(uri, field_networks):
+                kept.append((uri, result))
+            elif hy2_kept < HY2_SUBSCRIPTION_CAP:
+                hy2_kept += 1
+                kept.append((uri, result))
+            else:
+                stats["hy2_capped"] += 1
+            continue
+        kept.append((uri, result))
+    return kept, stats
+
 def history_key(line: str) -> str:
     """节点在历史中的身份：用去重键（忽略备注名）的哈希。"""
     key = get_dedup_key(line)
@@ -932,7 +991,8 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
         preferred = [e for e in entries
                      if history_key(e[0]) in priority_keys
                      or is_veteran(history.get(history_key(e[0])), now)
-                     or is_field_verified(e[0], field_networks)]
+                     or is_field_verified(e[0], field_networks)
+                     or get_protocol(e[0]) == "socks5"]
         preferred.sort(key=pref_rank)
         preferred_lines = {e[0] for e in preferred}
         others = [e for e in entries if e[0] not in preferred_lines]
@@ -1728,6 +1788,12 @@ def main():
     stats["shenzhen_filtered"] = before_whitelist - len(ranked_nodes)
     if stats["shenzhen_filtered"]:
         print(f"深圳实测白名单：滤除未实测验证类型 {stats['shenzhen_filtered']} 个，保留 {len(ranked_nodes)} 个")
+    # 大陆实测整形：Vision 出口门槛 + HY2 封顶（见整形函数的实测依据）。
+    ranked_nodes, shaping_stats = apply_field_evidence_shaping(ranked_nodes, field_networks)
+    stats.update(shaping_stats)
+    if shaping_stats["vision_exploration_dropped"] or shaping_stats["hy2_capped"]:
+        print(f"大陆实测整形：未达标 Vision 超探索位滤除 {shaping_stats['vision_exploration_dropped']} 个、"
+              f"HY2 超封顶滤除 {shaping_stats['hy2_capped']} 个，保留 {len(ranked_nodes)} 个")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
     stats["field_verified"] = sum(1 for uri in selected if is_field_verified(uri, field_networks))
     print("订阅排序（前置 / 档位 / Mbps）:")
