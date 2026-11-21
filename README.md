@@ -8,6 +8,16 @@
 
 **注意**：`gh-pages` 上的订阅任何人可获取和解码（Base64 不是加密），其中节点 URI 含各分享节点的 UUID/密码——这些凭据本就由原分享者公开。不要把自己的私有节点 URI 加入采集源或提交到本仓库；如需托管私用订阅，请使用私有仓库或有访问控制的渠道。
 
+## 订阅地址
+
+主链接（GitHub Pages 直达，缓存 10 分钟、更新最及时）：
+
+https://anna1211688.github.io/shadowrocket-auto/shadowrocket.txt
+
+备用链接（jsDelivr CDN 镜像，内容与主链接相同；个别网络连不上 github.io 时使用，注意其缓存最长可达 12 小时、节点可能偏旧）：
+
+https://cdn.jsdelivr.net/gh/anna1211688/shadowrocket-auto@gh-pages/shadowrocket.txt
+
 ## 安全说明
 
 - 订阅源响应上限 2 MiB；每源最多 5,000 条、总计最多 20,000 条候选；单行最多 8 KiB。
