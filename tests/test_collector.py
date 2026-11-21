@@ -676,3 +676,35 @@ class EgressRankTests(unittest.TestCase):
         self.assertEqual(collector.egress_rank({}), 2)
         self.assertEqual(collector.egress_rank({"egress_type": "datacenter"}), 3)
         self.assertEqual(collector.egress_rank({"egress_type": "proxy"}), 4)
+
+
+class ShenzhenWhitelistTests(unittest.TestCase):
+    """订阅发布白名单：只放行深圳实测能活的五类，WS 一律排除。"""
+
+    def test_allowed_types(self):
+        self.assertTrue(collector.shenzhen_publishable(
+            f"ss://{base64.urlsafe_b64encode(b'aes-128-gcm:pw').decode().rstrip('=')}@203.0.113.9:8388#x"))
+        self.assertTrue(collector.shenzhen_publishable("hysteria2://pw@h.example:443?sni=s.example#x"))
+        self.assertTrue(collector.shenzhen_publishable("socks5://user:pw@h.example:1080#x"))
+        self.assertTrue(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?security=reality&flow=xtls-rprx-vision#x"))
+        self.assertTrue(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?type=grpc&serviceName=svc#x"))
+
+    def test_blocked_types(self):
+        # WS 传输不分协议排除（含带 Vision flow 的 WS）。
+        self.assertFalse(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?type=ws&flow=xtls-rprx-vision#x"))
+        self.assertFalse(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?security=tls&type=ws#x"))
+        # Trojan、VMess、TUIC、AnyTLS、Hysteria v1、HTTP 都不在白名单。
+        self.assertFalse(collector.shenzhen_publishable("trojan://pw@h.example:443#x"))
+        self.assertFalse(collector.shenzhen_publishable("tuic://uuid:pw@h.example:443#x"))
+        self.assertFalse(collector.shenzhen_publishable("anytls://pw@h.example:443#x"))
+        self.assertFalse(collector.shenzhen_publishable("hysteria://pw@h.example:443#x"))
+        self.assertFalse(collector.shenzhen_publishable("http://user:pw@h.example:8080#x"))
+        # VLESS Reality/TLS 无 Vision flow、非 GRPC：未实测证明能活。
+        self.assertFalse(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?security=reality&pbk=k#x"))
+        self.assertFalse(collector.shenzhen_publishable(
+            "vless://uuid@h.example:443?security=tls#x"))

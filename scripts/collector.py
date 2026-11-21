@@ -1006,6 +1006,38 @@ MAX_PER_NETWORK = 3
 MAX_PER_NETWORK_PRIORITY = 8
 
 
+def shenzhen_publishable(line: str) -> bool:
+    """深圳实测白名单（2026-11-21 晚实测后收紧，仅作用于订阅发布）。
+
+    当晚订阅 70 个只有 14 个能用。实测能活的只有：SS 裸协议、
+    Hysteria2、SOCKS5、VLESS Vision 直连、VLESS GRPC；WebSocket
+    传输全灭（第三次验证）、Trojan 全灭、其余类型未证明能活。故发
+    布只放行这五类，WS 传输不分协议一律排除。采集、测速与历史积
+    累不受影响——其他类型继续攒数据，实测口径变了随时放回来。
+    """
+    protocol = get_protocol(line)
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(line).query)
+    except ValueError:
+        query = {}
+
+    def q(key: str) -> str:
+        values = query.get(key)
+        return values[0].lower() if values else ""
+
+    # WS 排除优先于白名单（不分协议）。
+    if q("type") in ("ws", "websocket"):
+        return False
+    if protocol in ("ss", "hysteria2", "hy2", "socks5", "socks"):
+        return True
+    if protocol == "vless":
+        if "vision" in q("flow"):
+            return True
+        if q("type") == "grpc":
+            return True
+    return False
+
+
 def dedupe_for_subscription(nodes: list[tuple], priority_keys: set | None = None) -> tuple[list[tuple], int]:
     """多样性闸门：同一服务最多留 MAX_PER_SERVICE 个入口，同一网段
     最多留 MAX_PER_NETWORK 个节点。输入须已按期望顺序排好。
@@ -1650,6 +1682,12 @@ def main():
     ranked_nodes, dropped_concentrated = dedupe_for_subscription(ranked_nodes, priority_keys=priority_keys)
     if dropped_concentrated:
         print(f"多样性闸门：丢弃同服务/同网段超额节点 {dropped_concentrated} 个，保留 {len(ranked_nodes)} 个分散节点")
+    # 深圳实测白名单：只作用于发布选择，采集/测速/历史照常积累。
+    before_whitelist = len(ranked_nodes)
+    ranked_nodes = [(uri, result) for uri, result in ranked_nodes if shenzhen_publishable(uri)]
+    stats["shenzhen_filtered"] = before_whitelist - len(ranked_nodes)
+    if stats["shenzhen_filtered"]:
+        print(f"深圳实测白名单：滤除未实测验证类型 {stats['shenzhen_filtered']} 个，保留 {len(ranked_nodes)} 个")
     selected = [uri for uri, _ in ranked_nodes[:MAX_NODES]]
     print("订阅排序（前置 / 档位 / Mbps）:")
     for rank, (uri, result) in enumerate(ranked_nodes[:10], 1):
