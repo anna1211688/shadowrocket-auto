@@ -38,3 +38,7 @@ https://aa.mibei77.com/202611/11.2064bagtq.txt
 # End GFW 免费节点（项目方自营，每 10 分钟复检；固定地址）
 https://raw.githubusercontent.com/hello-world-1989/cn-news/main/end-gfw-free
 https://tian.zmxoo.xyz/linkapi
+
+# go4sharing 永久订阅（Clash YAML，采集器自动转 URI；2026-11-22 用户批准）
+https://raw.githubusercontent.com/go4sharing/sub/main/sub.yaml
+https://raw.githubusercontent.com/go4sharing/sub/main/clash.yaml

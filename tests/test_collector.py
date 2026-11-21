@@ -806,3 +806,88 @@ class FreeClashNodeSourceTests(unittest.TestCase):
                          "https://node.freeclashnode.com/uploads/2026/11/0-20261121.txt")
         self.assertEqual(urls[-1],
                          "https://node.freeclashnode.com/uploads/2026/11/4-20261121.txt")
+
+
+class ClashYamlTests(unittest.TestCase):
+    """Clash YAML 订阅转换：协议映射、跳过规则与真实文件形态。"""
+
+    SAMPLE = """
+proxies:
+  - name: ss-node
+    server: 203.0.113.10
+    port: 8388
+    type: ss
+    cipher: aes-256-gcm
+    password: <redacted>
+  - name: ss-plugin
+    server: 203.0.113.11
+    port: 8388
+    type: ss
+    cipher: aes-256-gcm
+    password: pw
+    plugin: obfs
+  - name: ssr-node
+    server: 203.0.113.12
+    port: 8388
+    type: ssr
+    cipher: aes-256-cfb
+    password: pw
+    protocol: origin
+    obfs: plain
+  - name: vless-reality
+    server: 203.0.113.13
+    port: 443
+    type: vless
+    uuid: 11111111-2222-3333-4444-555555555555
+    tls: true
+    flow: xtls-rprx-vision
+    servername: example.com
+    reality-opts:
+      public-key: PUBKEY
+      short-id: ab12
+    client-fingerprint: chrome
+  - name: trojan-grpc
+    server: 203.0.113.14
+    port: 443
+    type: trojan
+    password: tpw
+    sni: t.example.com
+    network: grpc
+    grpc-opts:
+      grpc-service-name: mysvc
+  - name: hy2-node
+    server: 203.0.113.15
+    port: 443
+    type: hysteria2
+    password: hpw
+    sni: h.example.com
+  - name: socks-node
+    server: 203.0.113.16
+    port: 1080
+    type: socks5
+    username: user1
+    password: pw1
+"""
+
+    def test_conversion_and_skips(self):
+        uris = collector.decode_subscription(self.SAMPLE)
+        by_proto = {}
+        for uri in uris:
+            by_proto.setdefault(collector.get_protocol(uri), []).append(uri)
+        # ss 插件型跳过、ssr 跳过；其余各 1 条。
+        self.assertEqual(len(by_proto.get("ss", [])), 1)
+        self.assertNotIn("ssr", by_proto)
+        self.assertEqual(len(by_proto.get("vless", [])), 1)
+        self.assertIn("security=reality", by_proto["vless"][0])
+        self.assertIn("pbk=PUBKEY", by_proto["vless"][0])
+        self.assertIn("flow=xtls-rprx-vision", by_proto["vless"][0])
+        self.assertEqual(len(by_proto.get("trojan", [])), 1)
+        self.assertIn("type=grpc", by_proto["trojan"][0])
+        self.assertIn("serviceName=mysvc", by_proto["trojan"][0])
+        self.assertEqual(len(by_proto.get("hysteria2", [])), 1)
+        self.assertEqual(len(by_proto.get("socks5", [])), 1)
+        self.assertIn("user1:pw1@", by_proto["socks5"][0])
+
+    def test_garbage_yaml_returns_empty(self):
+        self.assertEqual(collector.clash_yaml_to_uris("proxies: [unclosed"), [])
+        self.assertEqual(collector.clash_yaml_to_uris("no proxies here"), [])

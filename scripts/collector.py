@@ -107,6 +107,12 @@ def decode_subscription(content: str) -> list[str]:
     if decoded and ("://" in decoded or "\n" in decoded):
         content = decoded
 
+    # Clash YAML 订阅（proxies: 结构）：转成 URI 列表再走统一管线。
+    if "proxies:" in content:
+        yaml_uris = clash_yaml_to_uris(content)
+        if yaml_uris:
+            return yaml_uris
+
     nodes = []
     for line in content.splitlines():
         line = line.strip()
@@ -116,6 +122,146 @@ def decode_subscription(content: str) -> list[str]:
                 break
     return nodes
 
+
+def clash_proxy_to_uri(proxy) -> str | None:
+    """单个 Clash 代理条目转分享 URI；不支持或字段不全返回 None。
+
+    只转换管线能测速的协议（ss/vmess/vless/trojan/hysteria2/tuic/
+    socks5/http）；SSR、Snell 等 sing-box 不支持的跳过，带插件的
+    SS（obfs/v2ray-plugin）也跳过——宁缺毋滥，错误转换只会污染池子。
+    """
+    if not isinstance(proxy, dict):
+        return None
+    ptype = str(proxy.get("type") or "").lower()
+    server, port = proxy.get("server"), proxy.get("port")
+    if not server or not port:
+        return None
+    host_port = f"{server}:{port}"
+    frag = urllib.parse.quote(str(proxy.get("name") or ""))
+
+    def params(**kw):
+        clean = {k: v for k, v in kw.items() if v not in (None, "")}
+        return urllib.parse.urlencode(clean)
+
+    def transport_params(base: dict) -> dict:
+        network = str(proxy.get("network") or "").lower()
+        if network in ("ws", "grpc"):
+            base["type"] = network
+        if network == "ws":
+            opts = proxy.get("ws-opts") or {}
+            if opts.get("path"):
+                base["path"] = opts["path"]
+            headers = opts.get("headers") or {}
+            if headers.get("Host"):
+                base["host"] = headers["Host"]
+        if network == "grpc":
+            opts = proxy.get("grpc-opts") or {}
+            if opts.get("grpc-service-name"):
+                base["serviceName"] = opts["grpc-service-name"]
+        return base
+
+    if ptype == "ss":
+        if proxy.get("plugin"):
+            return None
+        cipher, pw = proxy.get("cipher"), proxy.get("password")
+        if not cipher or pw is None:
+            return None
+        userinfo = base64.b64encode(f"{cipher}:{pw}".encode()).decode()
+        return f"ss://{userinfo}@{host_port}#{frag}"
+    if ptype in ("socks5", "http"):
+        user, pw = proxy.get("username"), proxy.get("password")
+        auth = ""
+        if user:
+            auth = urllib.parse.quote(str(user))
+            if pw is not None:
+                auth += ":" + urllib.parse.quote(str(pw))
+            auth += "@"
+        return f"{ptype}://{auth}{host_port}#{frag}"
+    if ptype == "trojan":
+        pw = proxy.get("password")
+        if pw is None:
+            return None
+        query = transport_params({"sni": proxy.get("sni") or proxy.get("servername")})
+        return f"trojan://{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
+    if ptype == "vless":
+        uuid = proxy.get("uuid")
+        if not uuid:
+            return None
+        reality = proxy.get("reality-opts") or {}
+        query = {"encryption": "none",
+                 "security": "reality" if reality else ("tls" if proxy.get("tls") else "none"),
+                 "sni": proxy.get("servername") or proxy.get("sni"),
+                 "flow": proxy.get("flow"),
+                 "fp": proxy.get("client-fingerprint"),
+                 "pbk": reality.get("public-key"),
+                 "sid": reality.get("short-id")}
+        query = transport_params(query)
+        if "type" not in query:
+            query["type"] = str(proxy.get("network") or "tcp")
+        return f"vless://{uuid}@{host_port}?{params(**query)}#{frag}"
+    if ptype == "vmess":
+        uuid = proxy.get("uuid")
+        if not uuid:
+            return None
+        ws_opts = proxy.get("ws-opts") or {}
+        headers = ws_opts.get("headers") or {}
+        doc = {"v": "2", "ps": str(proxy.get("name") or ""), "add": str(server),
+               "port": str(port), "id": str(uuid),
+               "aid": str(proxy.get("alterId") or 0),
+               "scy": str(proxy.get("cipher") or "auto"),
+               "net": str(proxy.get("network") or "tcp"),
+               "type": str(proxy.get("headerType") or "none"),
+               "host": str(headers.get("Host") or proxy.get("ws-headers", {}).get("Host") or ""),
+               "path": str(ws_opts.get("path") or ""),
+               "tls": "tls" if proxy.get("tls") else "",
+               "sni": str(proxy.get("servername") or proxy.get("sni") or "")}
+        encoded = base64.b64encode(
+            json.dumps(doc, ensure_ascii=False).encode()).decode()
+        return f"vmess://{encoded}"
+    if ptype in ("hysteria2", "hy2"):
+        pw = proxy.get("password")
+        if pw is None:
+            return None
+        query = {"sni": proxy.get("sni") or proxy.get("servername"),
+                 "insecure": "1" if proxy.get("skip-cert-verify") else None,
+                 "obfs": proxy.get("obfs"),
+                 "obfs-password": proxy.get("obfs-password")}
+        return f"hysteria2://{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
+    if ptype == "tuic":
+        uuid, pw = proxy.get("uuid"), proxy.get("password")
+        if not uuid or pw is None:
+            return None
+        query = {"sni": proxy.get("sni") or proxy.get("servername"),
+                 "congestion_control": proxy.get("congestion-controller"),
+                 "alpn": ",".join(proxy.get("alpn") or []) or None}
+        return f"tuic://{uuid}:{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
+    return None
+
+
+def clash_yaml_to_uris(content: str) -> list[str]:
+    """Clash YAML 订阅转 URI 列表（go4sharing 等 YAML-only 源）。
+
+    PyYAML 懒加载：缺库或解析失败返回空列表，绝不让单个源的格式
+    问题拖垮整轮采集。safe_load 不执行任意标签。
+    """
+    try:
+        import yaml
+    except ImportError:
+        return []
+    try:
+        data = yaml.safe_load(content)
+    except Exception:
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("proxies"), list):
+        return []
+    uris = []
+    for proxy in data["proxies"]:
+        uri = clash_proxy_to_uri(proxy)
+        if uri:
+            uris.append(uri)
+            if len(uris) >= MAX_SOURCE_NODES:
+                break
+    return uris
 
 def get_protocol(line: str) -> str | None:
     m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic|socks5?|anytls|https?)://", line, re.I)
