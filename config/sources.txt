@@ -42,3 +42,6 @@ https://tian.zmxoo.xyz/linkapi
 # go4sharing 永久订阅（Clash YAML，采集器自动转 URI；2026-11-22 用户批准）
 https://raw.githubusercontent.com/go4sharing/sub/main/sub.yaml
 https://raw.githubusercontent.com/go4sharing/sub/main/clash.yaml
+
+# node_pool 频道分享的 share-daily 节点池（Clash YAML；2026-11-22 用户批准）
+https://raw.githubusercontent.com/share-daily/node/main/clash.yaml
