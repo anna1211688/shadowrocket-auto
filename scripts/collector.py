@@ -454,6 +454,18 @@ def lookup_region_by_ip(ip_text: str) -> str:
 EGRESS_BATCH_API = "http://ip-api.com/batch?fields=status,countryCode,proxy,hosting,mobile,query"
 
 
+# 出口类型在订阅排序中的优先级（越小越靠前）：住宅出口在深圳实测
+# 中存活最好，移动次之；未测到的居中；机房（机场）IP 段最易被编目；
+# 已知代理出口垫底。
+EGRESS_RANK = {"residential": 0, "mobile": 1, "datacenter": 3, "proxy": 4}
+EGRESS_RANK_UNKNOWN = 2
+
+
+def egress_rank(result: dict) -> int:
+    """按测速结果里的出口类型给排序权重；未分类返回中位。"""
+    return EGRESS_RANK.get(result.get("egress_type"), EGRESS_RANK_UNKNOWN)
+
+
 def classify_egress_ips(ips) -> dict:
     """批量分类出口 IP：{ip: {"region": 地区键|None, "type": 分类}}。
 
@@ -1625,10 +1637,12 @@ def main():
     # 本轮结果并入历史（订阅排序与报告的老兵判定都用更新后的历史）。
     history = update_node_history(history, [e[0] for e in alive],
                                   [uri for uri, _ in successful_speed_nodes], run_now)
-    # 订阅排序：CF 前置优先，再按档位、同档内老兵靠前、再实测 Mbps；
-    # 然后按服务器去重，只留独立节点。
+    # 订阅排序：CF 前置优先，再按档位、同档内老兵靠前、再按出口
+    # 类型（住宅>移动>未测>机场>代理——深圳实测住宅出口最耐活，出口
+    # 类型测速时已顺带测得）、最后实测 Mbps；然后按服务器去重。
     successful_speed_nodes.sort(key=lambda item: (0 if cdn_fronted(item[0]) else 1, cn_tier(item[0]),
                                                   0 if is_veteran(history.get(history_key(item[0])), run_now) else 1,
+                                                  egress_rank(item[1]),
                                                   -item[1]["download_mbps"]))
     ranked_nodes, dropped_dupes = dedupe_by_endpoint(successful_speed_nodes)
     if dropped_dupes:

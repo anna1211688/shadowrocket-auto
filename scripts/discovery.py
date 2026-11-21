@@ -94,7 +94,8 @@ def extract_candidates(text: str) -> tuple[list[str], list[str]]:
     return uris, urls
 
 
-def _fetch_bytes(url: str, headers: dict | None, deadline: float | None) -> bytes | None:
+def _fetch_bytes(url: str, headers: dict | None, deadline: float | None,
+                 truncate: bool = False) -> bytes | None:
     """抓一个固定站点 URL 的原始字节；失败/超限/超时返回 None。
 
     审查整改（2026-11-21）：①不跟随重定向——「只访问固定站点」的
@@ -125,6 +126,14 @@ def _fetch_bytes(url: str, headers: dict | None, deadline: float | None) -> byte
                     continue
                 total += len(chunk)
                 if total > MAX_TEXT_BYTES:
+                    # 文本（truncate=True）截断保留已读部分——链接提取
+                    # 只需要前段，整页丢弃会白白损失大页面里的节点；
+                    # JSON 截断无法解析，超限即弃（二次审查整改）。
+                    if truncate:
+                        keep = len(chunk) - (total - MAX_TEXT_BYTES)
+                        if keep > 0:
+                            chunks.append(chunk[:keep])
+                        return b"".join(chunks)
                     return None
                 chunks.append(chunk)
             return b"".join(chunks)
@@ -133,7 +142,7 @@ def _fetch_bytes(url: str, headers: dict | None, deadline: float | None) -> byte
 
 
 def _get_text(url: str, headers: dict | None = None, deadline: float | None = None) -> str | None:
-    raw = _fetch_bytes(url, headers, deadline)
+    raw = _fetch_bytes(url, headers, deadline, truncate=True)
     if raw is None:
         return None
     return raw.decode("utf-8", "replace")

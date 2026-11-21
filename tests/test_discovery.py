@@ -166,3 +166,12 @@ class FetchGuardTests(unittest.TestCase):
             return_value=_FakeResp(chunks=[b'{"a": 1}']),
         ):
             self.assertEqual(discovery._get_json("https://api.github.com/x"), {"a": 1})
+
+    def test_oversized_text_is_truncated_not_dropped(self):
+        big = b"y" * (discovery.MAX_TEXT_BYTES + 100)
+        with unittest.mock.patch.object(
+            discovery.requests, "get", return_value=_FakeResp(chunks=[big])
+        ):
+            text = discovery._get_text("https://t.me/s/x")
+        self.assertTrue(text)
+        self.assertEqual(len(text), discovery.MAX_TEXT_BYTES)

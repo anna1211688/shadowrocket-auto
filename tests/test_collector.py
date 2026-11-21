@@ -667,3 +667,12 @@ class CnTierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EgressRankTests(unittest.TestCase):
+    def test_residential_first_proxy_last_unknown_middle(self):
+        self.assertEqual(collector.egress_rank({"egress_type": "residential"}), 0)
+        self.assertEqual(collector.egress_rank({"egress_type": "mobile"}), 1)
+        self.assertEqual(collector.egress_rank({}), 2)
+        self.assertEqual(collector.egress_rank({"egress_type": "datacenter"}), 3)
+        self.assertEqual(collector.egress_rank({"egress_type": "proxy"}), 4)
