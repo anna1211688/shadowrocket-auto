@@ -766,6 +766,6 @@ class FieldEvidenceShapingTests(unittest.TestCase):
         nodes.append(("ss://eA@198.51.100.99:8388#s", {"download_mbps": 1.0}))
         kept, stats = collector.apply_field_evidence_shaping(nodes, nets)
         hy2_kept = [u for u, _ in kept if u.startswith("hysteria2")]
-        self.assertEqual(len(hy2_kept), collector.HY2_SUBSCRIPTION_CAP + 1)  # 封顶 10 + 认证段 1
-        self.assertEqual(stats["hy2_capped"], 3)
+        self.assertEqual(len(hy2_kept), collector.HY2_SUBSCRIPTION_CAP + 1)  # 封顶 + 认证段 1
+        self.assertEqual(stats["hy2_capped"], 13 - collector.HY2_SUBSCRIPTION_CAP)
         self.assertTrue(any(u.startswith("ss://") for u, _ in kept))

@@ -662,7 +662,7 @@ def _is_vless_vision_or_grpc(uri: str) -> bool:
 
 # 大陆实测整形参数（2026-11-21/22 两晚深圳实测的量化结论）。
 VISION_EXPLORATION_SLOTS = 3   # 未达标 Vision/GRPC 每轮保留的探索位
-HY2_SUBSCRIPTION_CAP = 10      # HY2 在订阅中的封顶（认证网段不占名额）
+HY2_SUBSCRIPTION_CAP = 3       # HY2 在订阅中的封顶（认证网段不占名额）
 
 
 def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
@@ -673,9 +673,9 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
     1. VLESS Vision/GRPC：活下来的全是住宅/移动出口或认证网段的，
        机房与未测出口的整批超时——未达标者只留排序最靠前的
        VISION_EXPLORATION_SLOTS 个探索位，给新服务留证明机会；
-    2. HY2：两晚合计存活约 3/27、为白名单类型里最低，却常占订阅
-       三成版面——封顶 HY2_SUBSCRIPTION_CAP 个，认证网段内的
-       不占名额（实测证明能活的段不受配额误伤）。
+    2. HY2：三晚合计存活约 3/39、最近两晚 0/22，是白名单类型里
+       唯一持续整批超时的——封顶 HY2_SUBSCRIPTION_CAP 个（探索位
+       级别），认证网段内的不占名额（实测证明能活的段不受误伤）。
     SS/SOCKS5 的实测表现与现有排序已经对齐，不动。
     """
     kept = []
