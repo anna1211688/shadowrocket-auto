@@ -858,11 +858,23 @@ def select_speed_shortlist(alive: list[tuple], udp_candidates: list[str], seed: 
     history = history or {}
     priority_keys = priority_keys or set()
     # 分组（优先级从高到低）：CF 前置的 A/B → 直连 A → 直连 B → C 档。
-    groups: list[tuple[list[tuple], int]] = []
-    fronted = [e for e in alive if cn_tier(e[0]) <= 1 and cdn_fronted(e[0])]
-    direct_a = [e for e in alive if cn_tier(e[0]) == 0 and not cdn_fronted(e[0])]
-    direct_b = [e for e in alive if cn_tier(e[0]) == 1 and not cdn_fronted(e[0])]
-    tier_c = [e for e in alive if cn_tier(e[0]) == 2 and not cdn_fronted(e[0])]
+    # 单趟计算档位与前置标记（此前每条要重复算 3 次档位、2 次前置）。
+    fronted: list[tuple] = []
+    direct_a: list[tuple] = []
+    direct_b: list[tuple] = []
+    tier_c: list[tuple] = []
+    for entry in alive:
+        tier = cn_tier(entry[0])
+        if cdn_fronted(entry[0]):
+            if tier <= 1:
+                fronted.append(entry)
+            continue
+        if tier == 0:
+            direct_a.append(entry)
+        elif tier == 1:
+            direct_b.append(entry)
+        else:
+            tier_c.append(entry)
     groups = [(fronted, FRONTED_TCP_QUOTA), (direct_a, TIER_TCP_QUOTAS[0]),
               (direct_b, TIER_TCP_QUOTAS[1]), (tier_c, TIER_TCP_QUOTAS[2])]
     tcp_shortlist: list[str] = []

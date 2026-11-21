@@ -1,1 +1,6 @@
+# 直接依赖与传递依赖一并锁定，保证每轮运行环境可复现。
 requests==2.34.2
+charset-normalizer==3.4.4
+idna==3.11
+urllib3==2.5.0
+certifi==2025.11.12

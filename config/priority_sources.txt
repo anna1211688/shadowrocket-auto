@@ -1,9 +1,9 @@
 # 优先源：节点少而精的小型精选订阅，每轮保送进候选与测速名单，
 # 不参加候选上限抽签。保持克制——只有这类源才放进来，滥用会挤占
-# 测速预算。Pawdroid 每日精选（v2cross 转发的也是它）：文件仅约
-# 9 个节点，2026-11-20 深圳实测其中 6 个可用。
+# 测速预算。Pawdroid 每日精选（v2cross 转发的也是它）：文件节点数
+# 个位数（2026-11-20 时约 9 个），当日深圳实测其中 6 个可用。
 https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
-# free-nodes/v2rayfree：39 个节点的小文件（SS 17 个），2026-11-20
+# free-nodes/v2rayfree：小文件（2026-11-20 时 39 个节点、SS 17 个），当日
 # 晚深圳实测其 SS 大批可连（截图可见 14+ 个）。
 https://raw.githubusercontent.com/free-nodes/v2rayfree/main/sub
 # 米贝订阅：123 个节点，2026-11-20 深圳实测大批可连（Vision/SS）；

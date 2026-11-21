@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import socket
+import statistics
 import subprocess
 import tempfile
 import time
@@ -115,7 +116,12 @@ def _transport(query):
         if host:
             transport["host"] = [host]
         return transport
-    raise UnsupportedNode(f"transport {kind} not yet supported")
+    # 已知但暂不支持的传输可以带名字（便于诊断）；不在已知集合里的
+    # 一律固定文案——kind 来自节点链接的查询参数，是不受信文本，
+    # 原样带出会进公开质量报告与 CI 日志（审查整改，2026-11-21）。
+    if kind in ("xhttp", "splithttp", "h2", "quic", "httpupgrade"):
+        raise UnsupportedNode(f"transport {kind} not yet supported")
+    raise UnsupportedNode("unsupported transport")
 
 
 def build_outbound(uri):
@@ -279,7 +285,10 @@ def build_outbound(uri):
         outbound.update({"type": "http"})
         auth_user = urllib.parse.unquote(parsed.username or "")
         if auth_user:
-            outbound.update({"username": auth_user, "password": parsed.password or ""})
+            outbound.update({
+                "username": auth_user,
+                "password": urllib.parse.unquote(parsed.password or ""),
+            })
         if protocol == "https":
             outbound["tls"] = {"enabled": True, "server_name": host}
         return outbound
@@ -287,12 +296,12 @@ def build_outbound(uri):
     if protocol == "socks5":
         outbound.update({"type": "socks", "version": "5"})
         auth_user = urllib.parse.unquote(parsed.username or "")
-        auth_secret = parsed.password
+        auth_secret = urllib.parse.unquote(parsed.password) if parsed.password else None
         if auth_secret is None and auth_user:
             # 米贝等分享把 user:pass 整体 base64 后放进 userinfo；
             # 解不出冒号分隔的凭据时按原样当用户名用。
             try:
-                decoded = base64.b64decode(auth_user + "=" * (-len(auth_user) % 4)).decode()
+                decoded = base64.urlsafe_b64decode(auth_user + "=" * (-len(auth_user) % 4)).decode()
             except Exception:
                 decoded = ""
             if ":" in decoded:
@@ -571,7 +580,7 @@ def _attempt_download(uri, outbound, binary, started, deadline):
                         }
                     rates.append((len(payload) * 8) / elapsed / 1_000_000)
                 rates.sort()
-                median = rates[len(rates) // 2] if len(rates) % 2 else sum(rates) / 2
+                median = statistics.median(rates)
                 egress_ip = _probe_egress_ip(opener)
                 return {
                     "status": "ok",

@@ -1,1 +1,48 @@
-{"enable":true,"github":{"code_queries":["vless:// extension:txt","trojan:// extension:txt","hysteria2:// extension:txt"],"enable":true,"repo_queries":["free nodes v2ray subscription","免费节点 订阅","free proxy nodes shadowrocket"]},"google":{"enable":true,"queries":["免费节点 订阅地址 v2ray 今日","free v2ray nodes subscription today","raw.githubusercontent.com free nodes sub"]},"telegram":{"channels":["v2raynodes","v2rayfree","proxyfree","v2ray_free","freenodes","free_nodes","endgfw"],"enable":true},"x":{"enable":true,"users":[]},"youtube":{"enable":true,"max_videos_per_query":3,"queries":["免费节点 订阅","free v2ray nodes subscription"]}}
+{
+  "enable": true,
+  "github": {
+    "code_queries": [
+      "vless:// extension:txt",
+      "trojan:// extension:txt",
+      "hysteria2:// extension:txt"
+    ],
+    "enable": true,
+    "repo_queries": [
+      "free nodes v2ray subscription",
+      "免费节点 订阅",
+      "free proxy nodes shadowrocket"
+    ]
+  },
+  "google": {
+    "enable": true,
+    "queries": [
+      "免费节点 订阅地址 v2ray 今日",
+      "free v2ray nodes subscription today",
+      "raw.githubusercontent.com free nodes sub"
+    ]
+  },
+  "telegram": {
+    "channels": [
+      "v2raynodes",
+      "v2rayfree",
+      "proxyfree",
+      "v2ray_free",
+      "freenodes",
+      "free_nodes",
+      "endgfw"
+    ],
+    "enable": true
+  },
+  "x": {
+    "enable": false,
+    "users": []
+  },
+  "youtube": {
+    "enable": true,
+    "max_videos_per_query": 3,
+    "queries": [
+      "免费节点 订阅",
+      "free v2ray nodes subscription"
+    ]
+  }
+}

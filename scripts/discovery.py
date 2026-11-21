@@ -62,10 +62,8 @@ _TRAILING_JUNK = "\"'<>，。；、）】」』)]}>&"
 
 
 def _clean_token(token: str) -> str:
-    token = html_module.unescape(token)
-    while token and token[-1] in _TRAILING_JUNK:
-        token = token[:-1]
-    return token
+    # rstrip 一次完成：原先逐字切片是 O(n^2) 拷贝，超长"链接"可自伤。
+    return html_module.unescape(token).rstrip(_TRAILING_JUNK)
 
 
 def extract_candidates(text: str) -> tuple[list[str], list[str]]:
@@ -155,11 +153,19 @@ def _expired(deadline: float | None) -> bool:
     return deadline is not None and time.monotonic() >= deadline
 
 
+def _cap(uris: list, urls: list) -> bool:
+    """渠道内即时执行每渠道上限；返回是否已双双满额（可停抓）。"""
+    del uris[MAX_URIS_PER_CHANNEL:]
+    del urls[MAX_URLS_PER_CHANNEL:]
+    return len(uris) >= MAX_URIS_PER_CHANNEL and len(urls) >= MAX_URLS_PER_CHANNEL
+
 def github_token() -> str | None:
     """GitHub 令牌：环境变量优先；Actions 里尝试 checkout 持久化的凭据。
 
-    工作流文件无法由本项目修改（无 workflows 权限），checkout 动作会把
-    令牌存进本地 git 配置的 extraheader，这里只读解析、失败即放弃。
+    checkout 动作默认把令牌持久化进本地 git 配置的 extraheader
+    （2026-11-21 用户已在 workflow 里删除 persist-credentials: false），
+    这里只读解析、失败即放弃。注意：工作流自带令牌无权调用全站代码
+    搜索 API（实测被拒），代码搜索目前仅作尽力尝试，仓库搜索是主力。
     """
     for name in ("GITHUB_TOKEN", "GH_TOKEN"):
         value = os.environ.get(name)
@@ -264,6 +270,8 @@ def crawl_telegram(config: dict, deadline: float | None = None) -> dict:
         found_uris, found_urls = extract_candidates(page)
         uris.extend(found_uris)
         urls.extend(found_urls)
+        if _cap(uris, urls):
+            break
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
@@ -331,6 +339,8 @@ def crawl_youtube(config: dict, deadline: float | None = None) -> dict:
             found_uris, found_urls = extract_candidates(watch)
             uris.extend(found_uris)
             urls.extend(found_urls)
+            if _cap(uris, urls):
+                break
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
@@ -356,6 +366,8 @@ def crawl_x(config: dict, deadline: float | None = None) -> dict:
         found_uris, found_urls = extract_candidates(json.dumps(data, ensure_ascii=False))
         uris.extend(found_uris)
         urls.extend(found_urls)
+        if _cap(uris, urls):
+            break
     return {"uris": uris, "urls": urls, "notes": notes}
 
 
