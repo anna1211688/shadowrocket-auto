@@ -49,7 +49,7 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Collect nodes
         run: python scripts/collector.py
-      - name: Publish public Shadowrocket subscription to gh-pages
+      - name: Publish public subscriptions to gh-pages
         if: success() && hashFiles('docs/shadowrocket.txt') != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,16 +57,22 @@ jobs:
           pages_dir="$RUNNER_TEMP/shadowrocket-pages"
           mkdir -p "$pages_dir"
           cp docs/shadowrocket.txt "$pages_dir/shadowrocket.txt"
+          if [ -f docs/clash.yaml ]; then
+            cp docs/clash.yaml "$pages_dir/clash.yaml"
+          fi
           touch "$pages_dir/.nojekyll"
           git -C "$pages_dir" init --initial-branch=gh-pages
           git -C "$pages_dir" config user.name 'github-actions[bot]'
           git -C "$pages_dir" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C "$pages_dir" add -- shadowrocket.txt .nojekyll
-          git -C "$pages_dir" commit -m "Publish latest Shadowrocket subscription"
+          if [ -f "$pages_dir/clash.yaml" ]; then
+            git -C "$pages_dir" add -- clash.yaml
+          fi
+          git -C "$pages_dir" commit -m "Publish latest subscriptions"
           git -C "$pages_dir" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -C "$pages_dir" -c http.extraheader="$auth_header" push --force origin HEAD:gh-pages
-          echo 'Published subscription file to gh-pages/shadowrocket.txt'
+          echo 'Published subscription files to gh-pages (shadowrocket.txt, clash.yaml if generated)'
 
       - name: Save generated public artifacts only
         env:
@@ -98,6 +104,6 @@ jobs:
               fi
               sleep 5
             done
-          else
+            else
             echo 'No public artifact changes'
           fi
