@@ -107,6 +107,43 @@ class BuildClashConfigTests(unittest.TestCase):
             self.assertIn(name, groups["🚀 节点选择"]["proxies"])
         self.assertEqual(config["rules"][-1], "MATCH,🐟 漏网之鱼")
 
+    def test_shunting_groups_and_rules(self):
+        config = collector.build_clash_config(self.LINES)
+        groups = {g["name"]: g for g in config["proxy-groups"]}
+        # 地区 url-test 组带与 .conf 一致的过滤；自动前置 300 秒一测
+        for region in collector._CLASH_REGIONS:
+            self.assertEqual(groups[region]["type"], "url-test")
+            self.assertEqual(groups[region]["filter"],
+                             collector.CLASH_REGION_FILTERS[region])
+            self.assertEqual(groups[region]["interval"], 900)
+        self.assertEqual(groups["自动前置"]["type"], "url-test")
+        self.assertEqual(groups["自动前置"]["interval"], 300)
+        self.assertEqual(groups["自动前置"]["filter"], collector.CLASH_FRONT_FILTER)
+        # 服务组齐全且默认项（第一位）与 .conf 的 policy-select-name 对齐
+        for name, members in collector.CLASH_SERVICE_GROUPS.items():
+            self.assertEqual(groups[name]["type"], "select")
+            self.assertEqual(groups[name]["proxies"], members)
+        self.assertEqual(groups["AI"]["proxies"][0], "🚀 节点选择")
+        self.assertEqual(groups["苹果服务"]["proxies"][0], "DIRECT")
+        # 规则集 provider 与规则引用一一对应，目标组都存在
+        providers = config["rule-providers"]
+        self.assertEqual(set(providers), set(collector.CLASH_RULE_PROVIDERS))
+        for provider in providers.values():
+            self.assertEqual(provider["behavior"], "classical")
+            self.assertTrue(provider["url"].startswith("https://"))
+        group_names = set(groups) | {"DIRECT"}
+        for rule in config["rules"]:
+            parts = rule.split(",")
+            if parts[0] == "RULE-SET":
+                self.assertIn(parts[1], providers)
+                self.assertIn(parts[2], group_names)
+            elif parts[0] in ("DOMAIN-SUFFIX", "GEOIP"):
+                self.assertIn(parts[2], group_names)
+        self.assertIn("RULE-SET,ai,AI", config["rules"])
+        self.assertIn("DOMAIN-SUFFIX,googleapis.com,谷歌服务", config["rules"])
+        self.assertLess(config["rules"].index("RULE-SET,china,DIRECT"),
+                        config["rules"].index("GEOIP,CN,DIRECT"))
+
     def test_empty_or_unconvertible_returns_none(self):
         self.assertIsNone(collector.build_clash_config([]))
         self.assertIsNone(collector.dump_clash_config(["not a uri"]))

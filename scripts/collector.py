@@ -554,13 +554,155 @@ def uri_to_clash_proxy(line: str, name: str | None = None) -> dict | None:
     return None
 
 
+# ---- Clash 分流（与 Shadowrocket-Traffic-Shunting-Configuration 的
+# lazy_group_optimized.conf 对齐）----
+# 地区组过滤与 .conf 的 policy-regex-filter 逐字一致，作用在发布节点的
+# 展示名上；服务组与规则集一一对应，规则集改用上游 blackmatrix7 的
+# Clash 版（rule/Clash/<Name>/<Name>.list，classical 行为），AI 用
+# iab0x00 的 AI.txt（内容为无策略的 classical 行，可直接作规则集）。
+# .conf 里 PROXY（内置入口）对应这里的「🚀 节点选择」；各服务组的默认
+# 选项按 .conf 的 policy-select-name 放在第一位（Mihomo 默认选第一项）。
+
+CLASH_REGION_FILTERS = {
+    "香港节点": r"🇭🇰|(^|[^A-Za-z])(HK|HKG)([^A-Za-z]|$)|Hong Kong|HongKong|hong kong|hongkong|香港|深港|沪港|京港",
+    "台湾节点": r"🇹🇼|(^|[^A-Za-z])(TW|TWN)([^A-Za-z]|$)|Taiwan|taiwan|Taipei|taipei|台湾|台灣|台北|台中|新北|彰化",
+    "日本节点": r"🇯🇵|(^|[^A-Za-z])(JP|JPN)([^A-Za-z]|$)|Japan|japan|Tokyo|tokyo|Osaka|osaka|日本|东京|東京|大阪|京日|苏日|沪日|上日|川日|深日|广日",
+    "新加坡节点": r"🇸🇬|(^|[^A-Za-z])(SG|SGP)([^A-Za-z]|$)|Singapore|singapore|新加坡|狮城|沪新|京新|深新|杭新|广新",
+    "韩国节点": r"🇰🇷|(^|[^A-Za-z])(KR|KOR)([^A-Za-z]|$)|Korea|korea|Seoul|seoul|韩国|首尔|春川",
+    "美国节点": r"🇺🇸|(^|[^A-Za-z])(US|USA)([^A-Za-z]|$)|United States|united states|America|america|Phoenix|phoenix|Los Angeles|los angeles|Seattle|seattle|Chicago|chicago|New York|new york|美国|凤凰城|洛杉矶|西雅图|芝加哥|纽约|沪美",
+}
+
+# 与 .conf 的「自动前置」一致：全场自动最快，300 秒一测。
+CLASH_FRONT_FILTER = (
+    "🇭🇰|🇹🇼|🇯🇵|🇸🇬|🇰🇷|🇺🇸|🇬🇧|🇩🇪|🇫🇷|🇳🇱|🇨🇦|🇦🇺|🇮🇳|🇹🇭|🇻🇳|🇲🇾|🇮🇩|🇵🇭|🇷🇺|🇹🇷|🇦🇷|🇧🇷|🇲🇽|🇮🇹|🇪🇸|🇨🇭|🇸🇪|🇳🇿"
+    "|香港|台湾|台灣|日本|新加坡|韩国|美国|英国|德国|法国|荷兰|加拿大|澳洲|澳大利亚|印度|泰国|越南|马来|印尼|菲律宾|俄罗斯|土耳其|意大利|西班牙|瑞士|瑞典|新西兰"
+)
+
+_BLACKMATRIX7_CLASH = (
+    "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/"
+    "master/rule/Clash/{name}/{name}.list"
+)
+
+# provider 名 -> 规则集 URL（blackmatrix7 的目录名大小写按上游原样）
+CLASH_RULE_PROVIDERS = {
+    "ai": "https://raw.githubusercontent.com/iab0x00/ProxyRules/main/Rule/AI.txt",
+    "youtube": _BLACKMATRIX7_CLASH.format(name="YouTube"),
+    "netflix": _BLACKMATRIX7_CLASH.format(name="Netflix"),
+    "disney": _BLACKMATRIX7_CLASH.format(name="Disney"),
+    "hbo": _BLACKMATRIX7_CLASH.format(name="HBO"),
+    "spotify": _BLACKMATRIX7_CLASH.format(name="Spotify"),
+    "telegram": _BLACKMATRIX7_CLASH.format(name="Telegram"),
+    "paypal": _BLACKMATRIX7_CLASH.format(name="PayPal"),
+    "twitter": _BLACKMATRIX7_CLASH.format(name="Twitter"),
+    "facebook": _BLACKMATRIX7_CLASH.format(name="Facebook"),
+    "amazon": _BLACKMATRIX7_CLASH.format(name="Amazon"),
+    "sony": _BLACKMATRIX7_CLASH.format(name="Sony"),
+    "nintendo": _BLACKMATRIX7_CLASH.format(name="Nintendo"),
+    "epic": _BLACKMATRIX7_CLASH.format(name="Epic"),
+    "steamcn": _BLACKMATRIX7_CLASH.format(name="SteamCN"),
+    "steam": _BLACKMATRIX7_CLASH.format(name="Steam"),
+    "game": _BLACKMATRIX7_CLASH.format(name="Game"),
+    "github": _BLACKMATRIX7_CLASH.format(name="GitHub"),
+    "microsoft": _BLACKMATRIX7_CLASH.format(name="Microsoft"),
+    "google": _BLACKMATRIX7_CLASH.format(name="Google"),
+    "apple": _BLACKMATRIX7_CLASH.format(name="Apple"),
+    "bilibili": _BLACKMATRIX7_CLASH.format(name="BiliBili"),
+    "netease": _BLACKMATRIX7_CLASH.format(name="NetEaseMusic"),
+    "baidu": _BLACKMATRIX7_CLASH.format(name="Baidu"),
+    "douban": _BLACKMATRIX7_CLASH.format(name="DouBan"),
+    "wechat": _BLACKMATRIX7_CLASH.format(name="WeChat"),
+    "sina": _BLACKMATRIX7_CLASH.format(name="Sina"),
+    "zhihu": _BLACKMATRIX7_CLASH.format(name="Zhihu"),
+    "xiaohongshu": _BLACKMATRIX7_CLASH.format(name="XiaoHongShu"),
+    "douyin": _BLACKMATRIX7_CLASH.format(name="DouYin"),
+    "tiktok": _BLACKMATRIX7_CLASH.format(name="TikTok"),
+    "global": _BLACKMATRIX7_CLASH.format(name="Global"),
+    "china": _BLACKMATRIX7_CLASH.format(name="China"),
+    "lan": _BLACKMATRIX7_CLASH.format(name="Lan"),
+}
+
+# 服务组：组名 -> 成员（默认项在第一位；REGIONS 在构建时展开为六个地区组）
+_CLASH_REGIONS = ["香港节点", "台湾节点", "日本节点", "新加坡节点", "韩国节点", "美国节点"]
+CLASH_SERVICE_GROUPS = {
+    # AI 默认跟随节点选择（.conf 注释：避免地区组为空时 AI 分流失效）
+    "AI": ["🚀 节点选择", "日本节点", "香港节点", "台湾节点", "新加坡节点", "韩国节点", "美国节点"],
+    "YOUTUBE": ["🚀 节点选择", *_CLASH_REGIONS],
+    "NETFLIX": ["🚀 节点选择", *_CLASH_REGIONS],
+    "DISNEY+": ["🚀 节点选择", *_CLASH_REGIONS],
+    "MAX": ["🚀 节点选择", *_CLASH_REGIONS],
+    "TIKTOK": ["🚀 节点选择", *_CLASH_REGIONS],
+    "SPOTIFY": ["🚀 节点选择", "DIRECT", *_CLASH_REGIONS],
+    "TELEGRAM": ["🚀 节点选择", *_CLASH_REGIONS],
+    "TWITTER": ["🚀 节点选择", *_CLASH_REGIONS],
+    "FACEBOOK": ["🚀 节点选择", *_CLASH_REGIONS],
+    "PAYPAL": ["🚀 节点选择", "DIRECT", *_CLASH_REGIONS],
+    "AMAZON": ["🚀 节点选择", "DIRECT", *_CLASH_REGIONS],
+    "苹果服务": ["DIRECT", "🚀 节点选择", *_CLASH_REGIONS],
+    "谷歌服务": ["🚀 节点选择", *_CLASH_REGIONS],
+    "微软服务": ["🚀 节点选择", "DIRECT", *_CLASH_REGIONS],
+    "哔哩哔哩": ["DIRECT", "🚀 节点选择", "香港节点", "台湾节点"],
+    "游戏平台": ["🚀 节点选择", "DIRECT", *_CLASH_REGIONS],
+}
+
+# 规则顺序与 .conf 的 [Rule] 一致（从上到下匹配）
+CLASH_RULES = [
+    "DOMAIN-SUFFIX,deepseek.com,AI",
+    "DOMAIN-SUFFIX,generativelanguage.googleapis.com,AI",
+    "DOMAIN-SUFFIX,aiplatform.googleapis.com,AI",
+    "DOMAIN-SUFFIX,googleapis.com,谷歌服务",
+    "RULE-SET,ai,AI",
+    "RULE-SET,youtube,YOUTUBE",
+    "RULE-SET,netflix,NETFLIX",
+    "RULE-SET,disney,DISNEY+",
+    "DOMAIN-SUFFIX,litix.io,MAX",
+    "DOMAIN-SUFFIX,discomax.com,MAX",
+    "DOMAIN-SUFFIX,brightline.tv,MAX",
+    "RULE-SET,hbo,MAX",
+    "RULE-SET,spotify,SPOTIFY",
+    "RULE-SET,telegram,TELEGRAM",
+    "RULE-SET,paypal,PAYPAL",
+    "RULE-SET,twitter,TWITTER",
+    "RULE-SET,facebook,FACEBOOK",
+    "RULE-SET,amazon,AMAZON",
+    "RULE-SET,sony,游戏平台",
+    "RULE-SET,nintendo,游戏平台",
+    "RULE-SET,epic,游戏平台",
+    "RULE-SET,steamcn,游戏平台",
+    "RULE-SET,steam,游戏平台",
+    "RULE-SET,game,游戏平台",
+    "RULE-SET,github,🚀 节点选择",
+    "RULE-SET,microsoft,微软服务",
+    "RULE-SET,google,谷歌服务",
+    "RULE-SET,apple,苹果服务",
+    "RULE-SET,bilibili,哔哩哔哩",
+    "RULE-SET,netease,DIRECT",
+    "RULE-SET,baidu,DIRECT",
+    "RULE-SET,douban,DIRECT",
+    "RULE-SET,wechat,DIRECT",
+    "RULE-SET,sina,DIRECT",
+    "RULE-SET,zhihu,DIRECT",
+    "RULE-SET,xiaohongshu,DIRECT",
+    "RULE-SET,douyin,DIRECT",
+    "RULE-SET,tiktok,TIKTOK",
+    "RULE-SET,global,🚀 节点选择",
+    "RULE-SET,china,DIRECT",
+    "RULE-SET,lan,DIRECT",
+    "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+    "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+    "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+    "GEOIP,CN,DIRECT",
+    "MATCH,🐟 漏网之鱼",
+]
+
+
 def build_clash_config(lines: list[str]) -> dict | None:
     """已改名的发布 URI 列表转 Mihomo/Clash 完整配置；无可用节点返回 None。
 
     与 Shadowrocket 订阅共用同一批节点，只是格式不同：FIClash 等
-    Clash 系客户端只认 YAML 里的 proxies + 策略组 + 规则。规则保持
-    最小可用集（私网与中国大陆直连，其余走代理），不移植 Shadowrocket
-    的 .conf 分流，避免两套规则语义不一致时误导用户。
+    Clash 系客户端只认 YAML 里的 proxies + 策略组 + 规则。分组与规则
+    与 Shadowrocket 的 lazy_group_optimized.conf 分流对齐（见上方
+    CLASH_* 常量），两边行为尽量一致。
     """
     proxies = []
     seen_names: dict[str, int] = {}
@@ -576,6 +718,26 @@ def build_clash_config(lines: list[str]) -> dict | None:
     if not proxies:
         return None
     names = [proxy["name"] for proxy in proxies]
+    test_url = "http://www.gstatic.com/generate_204"
+    groups: list[dict] = [
+        {"name": "🚀 节点选择", "type": "select",
+         "proxies": ["♻️ 自动选择", "自动前置", *_CLASH_REGIONS, "DIRECT", *names]},
+        {"name": "♻️ 自动选择", "type": "url-test", "url": test_url,
+         "interval": 300, "tolerance": 50, "proxies": names},
+        {"name": "自动前置", "type": "url-test", "url": test_url,
+         "interval": 300, "tolerance": 50, "proxies": names,
+         "filter": CLASH_FRONT_FILTER},
+    ]
+    for region in _CLASH_REGIONS:
+        groups.append({
+            "name": region, "type": "url-test", "url": test_url,
+            "interval": 900, "tolerance": 50, "proxies": names,
+            "filter": CLASH_REGION_FILTERS[region],
+        })
+    for group_name, members in CLASH_SERVICE_GROUPS.items():
+        groups.append({"name": group_name, "type": "select", "proxies": members})
+    groups.append({"name": "🐟 漏网之鱼", "type": "select",
+                   "proxies": ["🚀 节点选择", "DIRECT"]})
     return {
         "mixed-port": 7890,
         "allow-lan": False,
@@ -589,23 +751,18 @@ def build_clash_config(lines: list[str]) -> dict | None:
             "fallback": ["8.8.8.8", "https://dns.google/dns-query"],
         },
         "proxies": proxies,
-        "proxy-groups": [
-            {"name": "🚀 节点选择", "type": "select",
-             "proxies": ["♻️ 自动选择", "DIRECT", *names]},
-            {"name": "♻️ 自动选择", "type": "url-test",
-             "url": "http://www.gstatic.com/generate_204",
-             "interval": 300, "tolerance": 50, "proxies": names},
-            {"name": "🐟 漏网之鱼", "type": "select",
-             "proxies": ["🚀 节点选择", "DIRECT"]},
-        ],
-        "rules": [
-            "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
-            "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
-            "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
-            "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
-            "GEOIP,CN,DIRECT",
-            "MATCH,🐟 漏网之鱼",
-        ],
+        "proxy-groups": groups,
+        "rule-providers": {
+            name: {
+                "type": "http",
+                "behavior": "classical",
+                "url": url,
+                "path": f"./ruleset/{name}.list",
+                "interval": 86400,
+            }
+            for name, url in CLASH_RULE_PROVIDERS.items()
+        },
+        "rules": list(CLASH_RULES),
     }
 
 

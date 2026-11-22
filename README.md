@@ -20,7 +20,7 @@ https://cdn.jsdelivr.net/gh/anna1211688/shadowrocket-auto@gh-pages/shadowrocket.
 
 ### Clash / FIClash 订阅
 
-同一批节点每小时同步生成一份 Clash YAML 完整配置（proxies + 策略组 + 最小规则集），供 FIClash（FlClash）等 Mihomo/Clash 系客户端订阅，与上面的 Shadowrocket 订阅共用同一仓库、同一套筛选与测速，只是格式不同：
+同一批节点每小时同步生成一份 Clash YAML 完整配置（proxies + 策略组 + 规则集），供 FIClash（FlClash）等 Mihomo/Clash 系客户端订阅，与上面的 Shadowrocket 订阅共用同一仓库、同一套筛选与测速，只是格式不同。策略组与分流规则和 Shadowrocket 版的 `lazy_group_optimized.conf` 对齐：六个地区自动测速组、全场最快的「自动前置」组，以及 AI / YouTube / Netflix / Telegram / 苹果 / 谷歌等服务分流组，规则集使用 blackmatrix7 的 Clash 版：
 
 https://anna1211688.github.io/shadowrocket-auto/clash.yaml
 
