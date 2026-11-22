@@ -23,6 +23,7 @@ PRIORITY_SOURCES = ROOT / "config" / "priority_sources.txt"
 FIELD_VERIFIED_NETWORKS = ROOT / "config" / "field_verified_networks.txt"
 DISCOVERY_CONFIG = ROOT / "config" / "discovery.json"
 OUTPUT = ROOT / "docs" / "shadowrocket.txt"
+CLASH_OUTPUT = ROOT / "docs" / "clash.yaml"
 QUALITY_REPORT = ROOT / "docs" / "quality_report.json"
 
 # ============ 可配置参数 ============
@@ -287,6 +288,338 @@ def clash_yaml_to_uris(content: str) -> list[str]:
             if len(uris) >= MAX_SOURCE_NODES:
                 break
     return uris
+
+def extract_display_name(line: str) -> str:
+    """从已改名的发布 URI 里取显示名（vmess 读 ps，其余读 # 备注）。"""
+    if get_protocol(line) == "vmess":
+        try:
+            raw = decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0])
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("ps"):
+                return str(data["ps"])
+        except (ValueError, TypeError):
+            pass
+    return urllib.parse.unquote(urllib.parse.urlsplit(line).fragment) or ""
+
+
+def _clash_query(line: str) -> dict:
+    parsed_qs = urllib.parse.parse_qs(urllib.parse.urlsplit(line).query)
+
+    def first(*keys, default=""):
+        for key in keys:
+            values = parsed_qs.get(key)
+            if values:
+                return values[0]
+        return default
+
+    return first
+
+
+def uri_to_clash_proxy(line: str, name: str | None = None) -> dict | None:
+    """单个分享 URI 转 Mihomo/Clash proxy 条目；不支持或字段不全返回 None。
+
+    与 clash_proxy_to_uri 互为逆向：覆盖测速器支持的协议。SS 插件、
+    xhttp 等 Mihomo 表达不了/未验证的形式跳过，宁缺毋滥。
+    """
+    protocol, host, port = get_endpoint(line)
+    if not protocol or not host or not port:
+        return None
+    parsed = urllib.parse.urlsplit(line)
+    q = _clash_query(line)
+    proxy: dict = {
+        "name": name or extract_display_name(line) or f"{protocol}-{host}-{port}",
+        "server": host,
+        "port": port,
+    }
+
+    def insecure() -> bool:
+        return q("allowInsecure", "insecure").lower() in ("1", "true", "yes")
+
+    def apply_transport(proxy: dict) -> bool:
+        network = q("type", "network", default="tcp").lower()
+        if network in ("", "tcp", "raw"):
+            return True
+        if network == "ws":
+            proxy["network"] = "ws"
+            opts: dict = {}
+            if q("path"):
+                opts["path"] = q("path")
+            if q("host"):
+                opts["headers"] = {"Host": q("host")}
+            if opts:
+                proxy["ws-opts"] = opts
+            return True
+        if network in ("grpc", "gun"):
+            proxy["network"] = "grpc"
+            if q("serviceName", "service_name"):
+                proxy["grpc-opts"] = {"grpc-service-name": q("serviceName", "service_name")}
+            return True
+        if network in ("http", "h2"):
+            proxy["network"] = "http"
+            opts = {}
+            if q("path"):
+                opts["path"] = [q("path")]
+            if q("host"):
+                opts["host"] = [q("host")]
+            if opts:
+                proxy["http-opts"] = opts
+            return True
+        if network in ("httpupgrade", "http-upgrade"):
+            proxy["network"] = "httpupgrade"
+            opts = {}
+            if q("path"):
+                opts["path"] = q("path")
+            if q("host"):
+                opts["host"] = q("host")
+            if opts:
+                proxy["httpupgrade-opts"] = opts
+            return True
+        return False
+
+    if protocol == "ss":
+        if q("plugin"):
+            return None
+        method = password = None
+        if parsed.hostname:
+            userinfo = urllib.parse.unquote(parsed.username or "")
+            if parsed.password is not None:
+                method, _, password = (userinfo + ":" + urllib.parse.unquote(parsed.password)).partition(":")
+            else:
+                decoded = decode_base64(userinfo)
+                method, _, password = (decoded or userinfo).partition(":")
+        else:
+            decoded = decode_base64(line[5:].split("#")[0].split("?")[0])
+            creds, _, _ = decoded.rpartition("@")
+            method, _, password = creds.partition(":")
+        if not method or not password:
+            return None
+        proxy.update({"type": "ss", "cipher": method, "password": password, "udp": True})
+        return proxy
+    if protocol == "vless":
+        uuid = urllib.parse.unquote(parsed.username or "")
+        if not uuid:
+            return None
+        proxy.update({"type": "vless", "uuid": uuid, "udp": True})
+        if q("flow"):
+            proxy["flow"] = q("flow")
+        security = q("security", default="none").lower()
+        if security in ("tls", "reality"):
+            proxy["tls"] = True
+        sni = q("sni", "peer")
+        if sni:
+            proxy["servername"] = sni
+        if q("fp"):
+            proxy["client-fingerprint"] = q("fp")
+        if security == "reality":
+            if not q("pbk", "publicKey"):
+                return None
+            reality = {"public-key": q("pbk", "publicKey")}
+            if q("sid", "shortId"):
+                reality["short-id"] = q("sid", "shortId")
+            proxy["reality-opts"] = reality
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        if q("alpn"):
+            proxy["alpn"] = [p for p in q("alpn").split(",") if p]
+        return proxy if apply_transport(proxy) else None
+    if protocol == "trojan":
+        password = urllib.parse.unquote(parsed.password or parsed.username or "")
+        if not password:
+            return None
+        proxy.update({"type": "trojan", "password": password, "udp": True})
+        sni = q("sni", "peer")
+        if sni:
+            proxy["sni"] = sni
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        if q("alpn"):
+            proxy["alpn"] = [p for p in q("alpn").split(",") if p]
+        return proxy if apply_transport(proxy) else None
+    if protocol == "vmess":
+        try:
+            data = json.loads(decode_base64(line[8:].split("#", 1)[0].split("?", 1)[0]))
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(data, dict) or not data.get("id"):
+            return None
+        try:
+            alter_id = int(data.get("aid", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        proxy.update({"type": "vmess", "uuid": str(data["id"]), "alterId": alter_id,
+                      "cipher": str(data.get("scy") or "auto"), "udp": True})
+        network = str(data.get("net") or "tcp").lower()
+        if network == "ws":
+            proxy["network"] = "ws"
+            opts = {}
+            if data.get("path"):
+                opts["path"] = str(data["path"])
+            if data.get("host"):
+                opts["headers"] = {"Host": str(data["host"])}
+            if opts:
+                proxy["ws-opts"] = opts
+        elif network in ("grpc", "gun"):
+            proxy["network"] = "grpc"
+        elif network not in ("", "tcp"):
+            return None
+        if str(data.get("tls") or "").lower() == "tls":
+            proxy["tls"] = True
+            sni = str(data.get("sni") or data.get("host") or "")
+            if sni:
+                proxy["servername"] = sni
+        return proxy
+    if protocol in ("hysteria2", "hy2"):
+        password = urllib.parse.unquote(parsed.password or parsed.username or "")
+        if not password:
+            return None
+        proxy.update({"type": "hysteria2", "password": password})
+        sni = q("sni", "peer")
+        if sni:
+            proxy["sni"] = sni
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        if q("obfs"):
+            proxy["obfs"] = q("obfs")
+        if q("obfs-password", "obfs_password"):
+            proxy["obfs-password"] = q("obfs-password", "obfs_password")
+        if q("alpn"):
+            proxy["alpn"] = [p for p in q("alpn").split(",") if p]
+        return proxy
+    if protocol == "hysteria":
+        proxy.update({"type": "hysteria"})
+        if q("auth"):
+            proxy["auth-str"] = q("auth")
+        sni = q("peer", "sni")
+        if sni:
+            proxy["sni"] = sni
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        if q("obfsParam", "obfsparam"):
+            proxy["obfs"] = q("obfsParam", "obfsparam")
+        for src, dst in (("upmbps", "up"), ("downmbps", "down")):
+            if q(src):
+                try:
+                    proxy[dst] = f"{int(float(q(src)))} Mbps"
+                except ValueError:
+                    pass
+        return proxy
+    if protocol == "tuic":
+        uuid = urllib.parse.unquote(parsed.username or "")
+        password = urllib.parse.unquote(parsed.password or "")
+        if not uuid or not password:
+            return None
+        proxy.update({"type": "tuic", "uuid": uuid, "password": password, "udp": True})
+        sni = q("sni", "peer")
+        if sni:
+            proxy["sni"] = sni
+        if q("congestion_control"):
+            proxy["congestion-controller"] = q("congestion_control")
+        if q("alpn"):
+            proxy["alpn"] = [p for p in q("alpn").split(",") if p]
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        return proxy
+    if protocol == "anytls":
+        password = urllib.parse.unquote(parsed.username or "")
+        if not password:
+            return None
+        proxy.update({"type": "anytls", "password": password, "udp": True})
+        sni = q("sni", "peer")
+        if sni:
+            proxy["sni"] = sni
+        if insecure():
+            proxy["skip-cert-verify"] = True
+        return proxy
+    if protocol == "socks5":
+        proxy.update({"type": "socks5", "udp": True})
+        user = urllib.parse.unquote(parsed.username or "")
+        secret = urllib.parse.unquote(parsed.password) if parsed.password else None
+        if secret is None and user:
+            decoded = decode_base64(user)
+            if ":" in decoded:
+                user, _, secret = decoded.partition(":")
+        if user:
+            proxy["username"] = user
+            proxy["password"] = secret or ""
+        return proxy
+    if protocol in ("http", "https"):
+        proxy.update({"type": "http"})
+        if protocol == "https":
+            proxy["tls"] = True
+        user = urllib.parse.unquote(parsed.username or "")
+        if user:
+            proxy["username"] = user
+            proxy["password"] = urllib.parse.unquote(parsed.password or "")
+        return proxy
+    return None
+
+
+def build_clash_config(lines: list[str]) -> dict | None:
+    """已改名的发布 URI 列表转 Mihomo/Clash 完整配置；无可用节点返回 None。
+
+    与 Shadowrocket 订阅共用同一批节点，只是格式不同：FIClash 等
+    Clash 系客户端只认 YAML 里的 proxies + 策略组 + 规则。规则保持
+    最小可用集（私网与中国大陆直连，其余走代理），不移植 Shadowrocket
+    的 .conf 分流，避免两套规则语义不一致时误导用户。
+    """
+    proxies = []
+    seen_names: dict[str, int] = {}
+    for line in lines:
+        proxy = uri_to_clash_proxy(line)
+        if not proxy:
+            continue
+        base_name = proxy["name"]
+        seen_names[base_name] = seen_names.get(base_name, 0) + 1
+        if seen_names[base_name] > 1:
+            proxy["name"] = f"{base_name} #{seen_names[base_name]}"
+        proxies.append(proxy)
+    if not proxies:
+        return None
+    names = [proxy["name"] for proxy in proxies]
+    return {
+        "mixed-port": 7890,
+        "allow-lan": False,
+        "mode": "rule",
+        "log-level": "info",
+        "ipv6": False,
+        "dns": {
+            "enable": True,
+            "ipv6": False,
+            "nameserver": ["223.5.5.5", "1.1.1.1"],
+            "fallback": ["8.8.8.8", "https://dns.google/dns-query"],
+        },
+        "proxies": proxies,
+        "proxy-groups": [
+            {"name": "🚀 节点选择", "type": "select",
+             "proxies": ["♻️ 自动选择", "DIRECT", *names]},
+            {"name": "♻️ 自动选择", "type": "url-test",
+             "url": "http://www.gstatic.com/generate_204",
+             "interval": 300, "tolerance": 50, "proxies": names},
+            {"name": "🐟 漏网之鱼", "type": "select",
+             "proxies": ["🚀 节点选择", "DIRECT"]},
+        ],
+        "rules": [
+            "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+            "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
+            "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
+            "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+            "GEOIP,CN,DIRECT",
+            "MATCH,🐟 漏网之鱼",
+        ],
+    }
+
+
+def dump_clash_config(lines: list[str]) -> str | None:
+    """build_clash_config 的 YAML 文本；无可用节点或缺 PyYAML 返回 None。"""
+    config = build_clash_config(lines)
+    if not config:
+        return None
+    try:
+        import yaml
+    except ImportError:
+        return None
+    return yaml.safe_dump(config, allow_unicode=True, sort_keys=False)
+
 
 def get_protocol(line: str) -> str | None:
     m = re.match(r"^(ss|vmess|vless|trojan|hysteria2?|hy2|tuic|socks5?|anytls|https?)://", line, re.I)
@@ -2163,8 +2496,17 @@ def main():
         print(f"  #{rank} {fronted_mark}{'ABC'[cn_tier(uri)]}档 {result['download_mbps']:.2f} Mbps  {protocol}://{host}:{port}")
 
     # 6. 只发布已完成代理隧道下载测试的节点；发布名统一为中文地区标记。
-    content = base64.b64encode("\n".join(label_subscription(selected, egress_regions=egress_regions, egress_types=egress_types)).encode("utf-8")).decode("ascii")
+    labelled = label_subscription(selected, egress_regions=egress_regions, egress_types=egress_types)
+    content = base64.b64encode("\n".join(labelled).encode("utf-8")).decode("ascii")
     atomic_write_text(OUTPUT, content + "\n")
+    # 同一批节点同步生成 Clash YAML（FIClash 等 Mihomo 客户端用）；
+    # 转不出任何节点时不覆盖旧文件，与订阅保留逻辑一致。
+    clash_config = build_clash_config(labelled)
+    stats["clash_proxies"] = len(clash_config["proxies"]) if clash_config else 0
+    clash_text = dump_clash_config(labelled)
+    if clash_text:
+        atomic_write_text(CLASH_OUTPUT, clash_text)
+        print(f"  → {CLASH_OUTPUT} (Clash YAML, {stats['clash_proxies']} 个节点)")
     write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats, egress_summary=egress_summary)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 

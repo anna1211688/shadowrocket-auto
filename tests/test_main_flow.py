@@ -29,7 +29,9 @@ class MainFlowTests(unittest.TestCase):
         sources = root / "sources.txt"
         sources.write_text(SOURCE_URL + "\n", encoding="utf-8")
         output = root / "shadowrocket.txt"
+        clash_output = root / "clash.yaml"
         report = root / "quality_report.json"
+        self._clash_output = clash_output
 
         def fake_rank(nodes, binary, limit=None):
             return rank_result
@@ -39,6 +41,7 @@ class MainFlowTests(unittest.TestCase):
             unittest.mock.patch.object(collector, "PRIORITY_SOURCES", root / "priority.txt"), \
             unittest.mock.patch.object(collector, "DISCOVERY_CONFIG", root / "discovery.json"), \
             unittest.mock.patch.object(collector, "OUTPUT", output), \
+            unittest.mock.patch.object(collector, "CLASH_OUTPUT", clash_output), \
             unittest.mock.patch.object(collector, "QUALITY_REPORT", report), \
             unittest.mock.patch.object(collector, "fetch_source", return_value=[NODE_LINE]), \
             unittest.mock.patch.object(
@@ -68,6 +71,12 @@ class MainFlowTests(unittest.TestCase):
         data = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(data["subscription_status"], "updated")
         self.assertEqual(len(data["node_history"]), 1)
+        # 同一批节点应同步生成 Clash YAML（FIClash 用）。
+        import yaml
+        clash = yaml.safe_load(self._clash_output.read_text(encoding="utf-8"))
+        self.assertEqual(len(clash["proxies"]), 1)
+        self.assertEqual(clash["proxies"][0]["type"], "ss")
+        self.assertIn("日本", clash["proxies"][0]["name"])
 
     def test_main_preserves_previous_when_speed_test_fails(self):
         tmp, output, report = self._run_main(([], [(NODE_LINE, {"status": "proxy_connect_failed"})]))

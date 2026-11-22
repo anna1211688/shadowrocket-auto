@@ -18,6 +18,16 @@ https://anna1211688.github.io/shadowrocket-auto/shadowrocket.txt
 
 https://cdn.jsdelivr.net/gh/anna1211688/shadowrocket-auto@gh-pages/shadowrocket.txt
 
+### Clash / FIClash 订阅
+
+同一批节点每小时同步生成一份 Clash YAML 完整配置（proxies + 策略组 + 最小规则集），供 FIClash（FlClash）等 Mihomo/Clash 系客户端订阅，与上面的 Shadowrocket 订阅共用同一仓库、同一套筛选与测速，只是格式不同：
+
+https://anna1211688.github.io/shadowrocket-auto/clash.yaml
+
+备用链接：https://cdn.jsdelivr.net/gh/anna1211688/shadowrocket-auto@gh-pages/clash.yaml
+
+注意不要把两个地址填错客户端：Shadowrocket 用 `shadowrocket.txt`，FIClash 用 `clash.yaml`。Clash YAML 是明文配置，节点凭据同样任何人可见，注意事项与上文相同。
+
 ## 安全说明
 
 - 订阅源响应上限 2 MiB；每源最多 5,000 条、总计最多 20,000 条候选；单行最多 8 KiB。
