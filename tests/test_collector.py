@@ -434,6 +434,22 @@ class CnTierTests(unittest.TestCase):
         history = collector.update_node_history(history, [], [], now)
         self.assertNotIn(collector.history_key(line), history)
 
+    def test_discovered_sources_naive_timestamp_treated_as_utc(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 21, tzinfo=dt.timezone.utc)
+        url = "https://a.example/sub"
+        # naive 时间戳（旧格式/手改报告）按 UTC 解释：1 天前保留、
+        # 8 天前淘汰，且不抛 TypeError（此前与 aware cutoff 比较会崩）。
+        recent = (now - dt.timedelta(days=1)).replace(tzinfo=None).isoformat()
+        stale = (now - dt.timedelta(days=8)).replace(tzinfo=None).isoformat()
+        state = {
+            url: {"f": recent, "l": recent, "ok": 1, "empty": 0},
+            "https://b.example/sub": {"f": stale, "l": stale, "ok": 1, "empty": 0},
+        }
+        state = collector.update_discovered_sources(state, {}, set(), now)
+        self.assertIn(url, state)
+        self.assertNotIn("https://b.example/sub", state)
+
     def test_history_key_ignores_remark(self):
         a = "trojan://pw@198.51.100.9:443#name-one"
         b = "trojan://pw@198.51.100.9:443#name-two"
