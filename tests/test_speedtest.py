@@ -52,7 +52,8 @@ class SingBoxOutboundTests(unittest.TestCase):
         self.assertEqual(outbound["down_mbps"], 200)
         self.assertEqual(outbound["obfs"], "obfsvalue")
         self.assertEqual(outbound["tls"]["server_name"], "sni.example")
-        self.assertTrue(outbound["tls"]["insecure"])
+        # 整改后：节点自带的 insecure=1 不再透传，保持证书校验。
+        self.assertNotIn("insecure", outbound["tls"])
 
     def test_anytls_conversion(self):
         outbound = speedtest.build_outbound("anytls://secret@example.com:443?sni=sni.example")

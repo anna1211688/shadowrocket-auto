@@ -31,7 +31,7 @@ SPEED_TEST_LIMIT = 200
 SPEED_TEST_WORKERS = 4
 SPEED_TEST_TOTAL_SECONDS = 600
 SPEED_TEST_BYTES = 262144
-SPEED_TEST_SAMPLES = 2
+SPEED_TEST_SAMPLES = 3  # 3 个样本取中位数才有统计意义（2 个时中位数即平均，抗噪声差）
 SPEED_TEST_TIMEOUT = 12
 # 单个节点的绝对截止（秒）：所有地址尝试、采样与出口探测共享这一份
 # 预算，杜绝滴流节点把整轮测速拖死（审查整改，2026-11-21）。
@@ -62,9 +62,9 @@ def _tls(query, host, security=""):
         "enabled": True,
         "server_name": _first(query, "sni", "peer", default=host),
     }
-    insecure = _first(query, "allowInsecure", "insecure")
-    if insecure.lower() in ("1", "true", "yes"):
-        result["insecure"] = True
+    # 整改：忽略节点自带的 allowInsecure/insecure 标记。节点是不可信
+    # 输入，让它自行关闭证书校验会使到节点的 TLS 可被中间人冒充；
+    # 一律保持证书校验，不再向 sing-box 输出 insecure=True。
     fingerprint = _first(query, "fp")
     if fingerprint:
         result["utls"] = {"enabled": True, "fingerprint": fingerprint}
@@ -264,9 +264,7 @@ def build_outbound(uri):
         if obfs:
             outbound["obfs"] = obfs
         tls = {"enabled": True, "server_name": _first(query, "peer", "sni", default=host)}
-        insecure = _first(query, "insecure", "allowInsecure")
-        if insecure.lower() in ("1", "true", "yes"):
-            tls["insecure"] = True
+        # 同 _tls：忽略节点自带的 insecure 标记，保持证书校验。
         outbound["tls"] = tls
         return outbound
 
