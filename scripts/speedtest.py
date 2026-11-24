@@ -19,9 +19,10 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 try:
-    from . import collector
+    from . import collector, uri_parse
 except ImportError:  # direct execution from scripts/collector.py
     import collector
+    import uri_parse
 
 SPEED_TEST_LIMIT = 200
 # 并行测速路数：每个节点各自起一个 sing-box 进程，互不干扰；并行让
@@ -48,11 +49,8 @@ def _query(parsed):
 
 
 def _first(query, *keys, default=""):
-    for key in keys:
-        values = query.get(key)
-        if values:
-            return values[0]
-    return default
+    # 与 collector._clash_query 共用 uri_parse.first_query_value 一份实现。
+    return uri_parse.first_query_value(query, *keys, default=default)
 
 
 def _tls(query, host, security=""):
