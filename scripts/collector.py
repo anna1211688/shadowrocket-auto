@@ -24,6 +24,7 @@ import random
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -31,6 +32,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
+
+if __name__ == "__main__" and "collector" not in sys.modules:
+    # 脚本模式（python scripts/collector.py）下，uri_parse 的
+    # collector_module() 延迟导入会 import collector；不先登记的话
+    # 本文件会被作为第二个模块实例再执行一遍，两份常量/缓存互不
+    # 可见。先把 sys.modules["collector"] 指向 __main__ 自身。
+    sys.modules["collector"] = sys.modules[__name__]
 
 try:
     from .uri_parse import (
@@ -252,9 +260,29 @@ def resolve_public_addresses(host: str) -> list[tuple]:
     return list(_resolve_domain_cached(host))
 
 
+class _EmptyResolution(Exception):
+    """内部信号：解析结果为空。借它让 lru_cache 不缓存空结果。"""
+
+
 @functools.lru_cache(maxsize=4096)
+def _resolve_domain_cached_nonempty(host: str) -> tuple:
+    result = tuple(_resolve_public_addresses_impl(host))
+    if not result:
+        # lru_cache 不缓存异常：一次瞬时失败（getent 返回空）若被缓存，
+        # 整轮该主机的节点都会被误判不可达；空结果必须下次重新解析。
+        raise _EmptyResolution(host)
+    return result
+
+
 def _resolve_domain_cached(host: str) -> tuple:
-    return tuple(_resolve_public_addresses_impl(host))
+    try:
+        return _resolve_domain_cached_nonempty(host)
+    except _EmptyResolution:
+        return ()
+
+
+# 保持既有调用习惯：测试用 _resolve_domain_cached.cache_clear() 清缓存。
+_resolve_domain_cached.cache_clear = _resolve_domain_cached_nonempty.cache_clear
 
 
 def _resolve_public_addresses_impl(host: str) -> list[tuple]:
@@ -538,6 +566,40 @@ def _response_within_limit(resp, limit: int) -> bool:
     return True
 
 
+def _read_json_within_limit(resp, limit: int):
+    """流式累计读取响应体并解析 JSON（与 _fetch_url_bytes 同一纪律）。
+
+    此前只靠 _response_within_limit 看 Content-Length：分块传输不带
+    该头时检查形同虚设，resp.json() 会把整个响应体读进内存。现在
+    先做头部拦截，再 iter_content 累计计量、超限即弃。响应对象没有
+    可用的流式接口时（测试替身）退回 resp.json()。失败/超限返回
+    None，调用方按原有降级语义处理。
+    """
+    if not _response_within_limit(resp, limit):
+        return None
+    iter_content = getattr(resp, "iter_content", None)
+    if callable(iter_content):
+        try:
+            chunks, total = [], 0
+            for chunk in iter_content(chunk_size=16384):
+                if not chunk:
+                    continue
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                total += len(chunk)
+                if total > limit:
+                    return None
+                chunks.append(chunk)
+            if chunks:
+                return json.loads(b"".join(chunks).decode("utf-8", "replace"))
+        except Exception:
+            return None
+    try:
+        return resp.json()
+    except Exception:
+        return None
+
+
 def region_for_country_code(code) -> str | None:
     """ISO 国家代码映射到本项目的地区键；表里没有的返回 None。"""
     if not isinstance(code, str) or not code:
@@ -573,8 +635,8 @@ def lookup_region_by_ip(ip_text: str) -> str:
             allow_redirects=False,
             stream=True,
         ) as resp:
-            if resp.status_code == 200 and _response_within_limit(resp, GEOIP_MAX_BYTES):
-                data = resp.json()
+            if resp.status_code == 200:
+                data = _read_json_within_limit(resp, GEOIP_MAX_BYTES)
                 if isinstance(data, dict) and data.get("status") == "success":
                     region = region_for_country_code(data.get("countryCode")) or "OTHER"
     except Exception:
@@ -628,9 +690,9 @@ def classify_egress_ips(ips) -> dict:
             allow_redirects=False,
             stream=True,
         ) as resp:
-            if resp.status_code != 200 or not _response_within_limit(resp, EGRESS_BATCH_MAX_BYTES):
+            if resp.status_code != 200:
                 return {}
-            data = resp.json()
+            data = _read_json_within_limit(resp, EGRESS_BATCH_MAX_BYTES)
     except Exception:
         return {}
     classified: dict[str, dict] = {}
@@ -1033,6 +1095,10 @@ def update_discovered_sources(stored: dict, fetch_results: dict, rediscovered: s
             last = datetime.datetime.fromisoformat(entry.get("l", ""))
         except ValueError:
             continue
+        if last.tzinfo is None:
+            # 与 update_node_history 一致：旧格式/手改报告里的 naive
+            # 时间戳按 UTC 解释，否则与 aware 的 cutoff 比较会 TypeError。
+            last = last.replace(tzinfo=datetime.timezone.utc)
         if last < cutoff or entry.get("empty", 0) >= DISCOVERED_MAX_EMPTY:
             continue
         kept[url] = entry
@@ -1556,12 +1622,18 @@ def is_allowed_source_url(url: str) -> bool:
 
 
 def source_host_is_public(url: str) -> bool:
-    """DNS 重绑定防线：请求前确认 URL 主机解析到的地址全部为公网。
+    """DNS 预检：请求前确认 URL 主机解析到的地址全部为公网。
 
     主机名白名单只能证明名字可信，攻击者控制 DNS 时仍可把名字解析到
     内网（重绑定）。这里复用 resolve_public_addresses（它拒绝任何含
     非公网地址的解析结果，IP 字面量同样校验）；解析失败、超时或结果
     为空一律拒绝。可单测：测试只需 mock resolve_public_addresses。
+
+    已知取舍（明确接受）：预检与 _fetch_url_bytes 的实际连接是两次
+    独立解析，校验结果没有固定到连接层，理论上存在重绑定窗口；
+    残留风险靠 requests 按主机名校验 TLS 证书兜底——重绑定到的内网
+    地址拿不出该域名的合法证书，连接会失败。不要把本预检表述为
+    已完全防住 TOCTOU。
     """
     try:
         host = urllib.parse.urlsplit(url).hostname
@@ -1581,6 +1653,8 @@ def _fetch_url_bytes(url: str, deadline: float, request_timeout=None) -> bytes:
     与流式累计双重 2MB 上限、以及整轮 deadline。失败以异常抛出，由
     调用方决定重试 (fetch_source) 还是返回 None (_fetch_text)。
     request_timeout 为 None 时按 deadline 剩余时间自行计算。
+    注意：此处 requests 按主机名重新解析并连接，与 source_host_is_public
+    的预检是两次独立解析（TOCTOU 取舍见该函数注释，靠 TLS 证书兜底）。
     """
     if request_timeout is None:
         remaining = deadline - time.monotonic()

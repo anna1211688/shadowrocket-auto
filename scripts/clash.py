@@ -71,7 +71,10 @@ def clash_proxy_to_uri(proxy) -> str | None:
         cipher, pw = proxy.get("cipher"), proxy.get("password")
         if not cipher or pw is None:
             return None
-        userinfo = base64.b64encode(f"{cipher}:{pw}".encode()).decode()
+        # SIP002：userinfo 用 base64url 且去掉 = 填充；标准 base64 的
+        # / 与 + 会破坏 URL 结构，含这类字符的密码此前转出的链接不可用。
+        userinfo = base64.urlsafe_b64encode(
+            f"{cipher}:{pw}".encode()).decode().rstrip("=")
         return f"ss://{userinfo}@{host_port}#{frag}"
     if ptype in ("socks5", "socks", "http"):
         user, pw = proxy.get("username"), proxy.get("password")

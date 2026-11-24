@@ -93,6 +93,27 @@ class UriToClashProxyTests(unittest.TestCase):
         self.assertIsNone(collector.uri_to_clash_proxy("ss://%%%"))
 
 
+class ClashProxyToUriTests(unittest.TestCase):
+    def test_ss_userinfo_is_base64url_without_padding(self):
+        # 密码含会让标准 base64 产生 / 与 + 的字符：SIP002 要求
+        # base64url 且无填充，否则链接结构被破坏、密码取不回来。
+        password = "Qt?_i~]Yjjadjl"
+        raw = f"aes-256-gcm:{password}".encode()
+        self.assertIn("/", base64.b64encode(raw).decode())
+        self.assertIn("+", base64.b64encode(raw).decode())
+        proxy = {"type": "ss", "name": "SS special", "server": "1.2.3.4",
+                 "port": 8388, "cipher": "aes-256-gcm", "password": password}
+        uri = collector.clash_proxy_to_uri(proxy)
+        self.assertIsNotNone(uri)
+        userinfo = uri.split("://", 1)[1].split("@", 1)[0]
+        self.assertNotIn("/", userinfo)
+        self.assertNotIn("+", userinfo)
+        self.assertNotIn("=", userinfo)
+        back = collector.uri_to_clash_proxy(uri)
+        self.assertEqual(back["cipher"], "aes-256-gcm")
+        self.assertEqual(back["password"], password)
+
+
 class BuildClashConfigTests(unittest.TestCase):
     LINES = [SS_LINE, HY2_LINE, SOCKS_LINE, VLESS_VISION, VLESS_GRPC]
 
