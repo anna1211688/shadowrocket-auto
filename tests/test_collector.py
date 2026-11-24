@@ -223,9 +223,10 @@ class SourceUrlSecurityTests(unittest.TestCase):
         ):
             self.assertFalse(collector.is_allowed_source_url(url), url)
 
+    @patch.object(collector, "source_host_is_public", return_value=True)
     @patch("scripts.collector.SOURCE_RETRIES", 0)
     @patch("scripts.collector.requests.get")
-    def test_rejects_redirect_response_without_following_it(self, mocked_get):
+    def test_rejects_redirect_response_without_following_it(self, mocked_get, mocked_dns):
         response = mocked_get.return_value.__enter__.return_value
         response.status_code = 302
         response.headers = {}
@@ -248,6 +249,7 @@ class SourceUrlSecurityTests(unittest.TestCase):
             "__exit__": lambda self, *args: None,
         })()
         with patch.object(collector, "SOURCE_RETRIES", 0), \
+             patch.object(collector, "source_host_is_public", return_value=True), \
              patch("scripts.collector.requests.get", return_value=manager), \
              patch("scripts.collector.time.monotonic", side_effect=[0.0, 0.0, collector.SOURCE_DEADLINE + 1]):
             self.assertEqual(
@@ -255,10 +257,11 @@ class SourceUrlSecurityTests(unittest.TestCase):
                 [],
             )
 
+    @patch.object(collector, "source_host_is_public", return_value=True)
     @patch("scripts.collector.time.sleep")
     @patch("scripts.collector.time.monotonic", side_effect=[0.0, 0.0, 0.0, collector.SOURCE_DEADLINE + 1])
     @patch("scripts.collector.requests.get", side_effect=collector.requests.Timeout("temporary timeout"))
-    def test_retries_share_one_total_deadline(self, mocked_get, mocked_monotonic, mocked_sleep):
+    def test_retries_share_one_total_deadline(self, mocked_get, mocked_monotonic, mocked_sleep, mocked_dns):
         self.assertEqual(
             collector.fetch_source("https://raw.githubusercontent.com/owner/repo/main/list.txt"),
             [],

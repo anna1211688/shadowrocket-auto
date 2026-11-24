@@ -13,12 +13,10 @@ www.youtube.com、syndication.twitter.com），不抓取搜索结果里的
 一轮的主流程。
 """
 
-import base64
 import html as html_module
 import json
 import os
 import re
-import subprocess
 import time
 import urllib.parse
 
@@ -169,31 +167,18 @@ def _cap(uris: list, urls: list) -> bool:
     return len(uris) >= MAX_URIS_PER_CHANNEL and len(urls) >= MAX_URLS_PER_CHANNEL
 
 def github_token() -> str | None:
-    """GitHub 令牌：环境变量优先；Actions 里尝试 checkout 持久化的凭据。
+    """GitHub 令牌：只读环境变量 GITHUB_TOKEN / GH_TOKEN。
 
-    checkout 动作默认把令牌持久化进本地 git 配置的 extraheader
-    （2026-11-21 用户已在 workflow 里删除 persist-credentials: false），
-    这里只读解析、失败即放弃。注意：工作流自带令牌无权调用全站代码
-    搜索 API（实测被拒），代码搜索目前仅作尽力尝试，仓库搜索是主力。
+    整改：删除原先从 checkout 持久化凭据 (git config extraheader)
+    解出令牌的后备逻辑——采集/发现阶段处理不可信数据，不应能拿到
+    可写仓库的令牌；workflow 已改为 persist-credentials: false，
+    需要令牌的步骤应通过 env 显式传入。无令牌时代码搜索跳过、
+    仓库搜索以未授权速率运行（实测够用）。
     """
     for name in ("GITHUB_TOKEN", "GH_TOKEN"):
         value = os.environ.get(name)
         if value:
             return value.strip()
-    try:
-        # 不能用 --local：checkout 把凭据放在 RUNNER_TEMP 的独立配置文件里，
-        # 本地配置只有一条 include.path 指向它，必须让 git 跟随 include 解析。
-        completed = subprocess.run(
-            ["git", "config", "--get-all", "http.https://github.com/.extraheader"],
-            check=False, capture_output=True, text=True, timeout=5,
-        )
-        header = completed.stdout.strip().splitlines()[-1].strip() if completed.stdout.strip() else ""
-        if header.lower().startswith("authorization: basic "):
-            decoded = base64.b64decode(header.split(" ", 2)[-1]).decode("utf-8", "replace")
-            if ":" in decoded:
-                return decoded.split(":", 1)[1].strip() or None
-    except Exception:
-        pass
     return None
 
 
@@ -252,8 +237,12 @@ def crawl_github(config: dict, token: str | None, deadline: float | None = None)
             continue
         for repo in data["items"][:8]:
             branch = repo.get("default_branch") or "main"
+            safe_repo = "/".join(
+                urllib.parse.quote(str(part), safe="") for part in str(repo["full_name"]).split("/")
+            )
+            safe_branch = urllib.parse.quote(str(branch), safe="")
             readme = _get_text(
-                f"https://raw.githubusercontent.com/{repo['full_name']}/{branch}/README.md",
+                f"https://raw.githubusercontent.com/{safe_repo}/{safe_branch}/README.md",
                 deadline=deadline,
             )
             if readme:
@@ -272,7 +261,7 @@ def crawl_telegram(config: dict, deadline: float | None = None) -> dict:
         if _expired(deadline):
             notes.append("deadline")
             break
-        page = _get_text(f"https://t.me/s/{channel}", deadline=deadline)
+        page = _get_text(f"https://t.me/s/{urllib.parse.quote(str(channel), safe='')}", deadline=deadline)
         if not page:
             notes.append(f"{channel}: fetch failed")
             continue
@@ -366,7 +355,7 @@ def crawl_x(config: dict, deadline: float | None = None) -> dict:
             notes.append("deadline")
             break
         data = _get_json(
-            f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{user}",
+            f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{urllib.parse.quote(str(user), safe='')}",
             deadline=deadline,
         )
         if not data:

@@ -1,5 +1,17 @@
+"""collector: 节点采集主流程（单文件多分区，不做物理拆分以保持导入兼容）。
+
+分区地图（按文件内顺序）：
+  1. 配置常量 / 原子写 / Base64 与订阅解码 / Clash <-> URI 互转
+  2. 端点解析 (get_endpoint / get_dedup_key) 与地区推断 / GeoIP
+  3. 节点历史、候选筛选与测速名单选择
+  4. 质量报告 (write_quality_report)
+  5. TCP 测活、源白名单与源抓取 (fetch_source / _fetch_text)
+  6. 特殊源解析 (FreeClashNode / 小汐搬运) 与 main 主流程
+外部导入方 (tests / speedtest / discovery) 依赖的公开函数签名保持不变。
+"""
 import base64
 import datetime
+import functools
 import ipaddress
 import hashlib
 import html
@@ -46,6 +58,35 @@ MAX_SOURCES = 50
 MAX_SOURCE_WORKERS = 10
 MAX_TEST_CANDIDATES = 5_000
 USER_AGENT = "shadowrocket-auto/1.0"
+
+# 结构化失败统计：fetch_source 失败时按 (host, reason) 聚合，供 main
+# 结束时打印与排查；只记主机名与异常类名，不记完整 URL/凭据。
+SOURCE_FAILURE_COUNTS: dict[tuple[str, str], int] = {}
+
+
+def _record_source_failure(url: str, reason: str) -> None:
+    try:
+        host = urllib.parse.urlsplit(url).hostname or "unknown"
+    except Exception:
+        host = "unknown"
+    key = (host, str(reason))
+    SOURCE_FAILURE_COUNTS[key] = SOURCE_FAILURE_COUNTS.get(key, 0) + 1
+
+
+def get_source_failure_counts() -> dict:
+    """返回源抓取失败聚合的副本 {(host, reason): count}。"""
+    return dict(SOURCE_FAILURE_COUNTS)
+
+
+def _print_source_failure_counts() -> None:
+    counts = get_source_failure_counts()
+    if counts:
+        summary = ", ".join(
+            f"{host}/{reason}={count}"
+            for (host, reason), count in sorted(counts.items())
+        )
+        print(f"源抓取失败聚合: {summary}")
+
 
 class DNSResolutionTimeout(Exception):
     """Raised when the external DNS lookup exceeds its hard deadline."""
@@ -227,7 +268,7 @@ def clash_proxy_to_uri(proxy) -> str | None:
         if pw is None:
             return None
         query = {"sni": proxy.get("sni") or proxy.get("servername"),
-                 "insecure": "1" if proxy.get("skip-cert-verify") else None,
+                 "insecure": None,  # 整改：不把 Clash 的 skip-cert-verify 透传为节点 insecure 标记（保持证书校验）
                  "obfs": proxy.get("obfs"),
                  "obfs-password": proxy.get("obfs-password")}
         return f"hysteria2://{urllib.parse.quote(str(pw))}@{host_port}?{params(**query)}#{frag}"
@@ -245,7 +286,7 @@ def clash_proxy_to_uri(proxy) -> str | None:
                  "upmbps": _mbps(proxy.get("up")),
                  "downmbps": _mbps(proxy.get("down")),
                  "obfsParam": proxy.get("obfs"),
-                 "insecure": "1" if proxy.get("skip-cert-verify") else None}
+                 "insecure": None}  # 同上：不透传 skip-cert-verify
         return f"hysteria://{host_port}?{params(**query)}#{frag}"
     if ptype == "anytls":
         pw = proxy.get("password")
@@ -333,7 +374,11 @@ def uri_to_clash_proxy(line: str, name: str | None = None) -> dict | None:
     }
 
     def insecure() -> bool:
-        return q("allowInsecure", "insecure").lower() in ("1", "true", "yes")
+        # 整改：不再透传节点自带的 allowInsecure/insecure 标记。
+        # 节点是不可信输入，让它自行关闭证书校验会使客户端到节点的
+        # TLS 可被中间人冒充；一律保持校验，故此处恒为 False，
+        # 下游的 skip-cert-verify 字段因此不再输出。
+        return False
 
     def apply_transport(proxy: dict) -> bool:
         network = q("type", "network", default="tcp").lower()
@@ -811,6 +856,29 @@ def normalize_dns_name(host: str) -> str | None:
 
 
 def resolve_public_addresses(host: str) -> list[tuple]:
+    """解析主机并拒绝非公网结果；域名结果单轮内缓存（见下）。
+
+    IP 字面量与非法名不走缓存（便宜且测试替身常按次替换行为）；
+    域名走 _resolve_domain_cached，同一 host 一轮只跑一次 getent。
+    """
+    # Fast path for literals / invalid names is inside the uncached helper;
+    # only well-formed DNS names use the cache.
+    try:
+        ipaddress.ip_address(host)  # type: ignore[arg-type]
+        return _resolve_public_addresses_impl(host)
+    except Exception:
+        pass
+    if not isinstance(host, str) or normalize_dns_name(host) is None:
+        return _resolve_public_addresses_impl(host)
+    return list(_resolve_domain_cached(host))
+
+
+@functools.lru_cache(maxsize=4096)
+def _resolve_domain_cached(host: str) -> tuple:
+    return tuple(_resolve_public_addresses_impl(host))
+
+
+def _resolve_public_addresses_impl(host: str) -> list[tuple]:
     """解析主机并拒绝非公网结果；域名解析由可超时终止的 getent 子进程执行。"""
     if not isinstance(host, str) or not host or len(host) > 253 or any(ord(c) < 33 or ord(c) == 127 for c in host) or any(c in host for c in "/\\\\?#@"):
         return []
@@ -1065,10 +1133,30 @@ def infer_region(line: str) -> str:
 
 
 # --- IP 归属地兜底（仅发布改名阶段、关键词推不出地区时使用） ---
-GEOIP_ENDPOINT = "http://ip-api.com/json/{ip}?fields=status,countryCode"
+GEOIP_ENDPOINT = "https://ip-api.com/json/{ip}?fields=status,countryCode"
 GEOIP_TIMEOUT = (3, 5)
 GEOIP_MAX_LOOKUPS = 40
+GEOIP_MAX_BYTES = 65_536
 _geoip_cache: dict[str, str] = {}
+
+
+def _response_within_limit(resp, limit: int) -> bool:
+    """读 JSON 前的廉价大小校验：优先看 Content-Length，其次看已缓冲
+    的 bytes content；头部缺失/类型异常（测试替身）时不误杀、放行。"""
+    try:
+        headers = getattr(resp, "headers", None)
+        length = headers.get("Content-Length") if headers is not None else None
+        if isinstance(length, str) and length.isdigit() and int(length) > limit:
+            return False
+    except Exception:
+        pass
+    try:
+        content = getattr(resp, "content", None)
+        if isinstance(content, (bytes, bytearray)) and len(content) > limit:
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def region_for_country_code(code) -> str | None:
@@ -1084,8 +1172,9 @@ def region_for_country_code(code) -> str | None:
 def lookup_region_by_ip(ip_text: str) -> str:
     """查公网 IP 的归属国家；任何失败都返回 OTHER，绝不中断发布。
 
-    ip-api 免费端点限速且为 HTTP，因此只查公网 IP、结果按 IP 缓存、
-    超时短；调用方另有每轮次数上限（GEOIP_MAX_LOOKUPS）。
+    ip-api 端点已改为 HTTPS（避免明文泄露被查 IP 与结果被篡改）；
+    只查公网 IP、结果按 IP 缓存、超时短；调用方另有每轮次数上限
+    （GEOIP_MAX_LOOKUPS）。请求不跟随重定向，读 JSON 前先做大小校验。
     """
     try:
         ip = ipaddress.ip_address(str(ip_text))
@@ -1102,8 +1191,10 @@ def lookup_region_by_ip(ip_text: str) -> str:
             GEOIP_ENDPOINT.format(ip=key),
             timeout=GEOIP_TIMEOUT,
             headers={"User-Agent": USER_AGENT},
+            allow_redirects=False,
+            stream=True,
         ) as resp:
-            if resp.status_code == 200:
+            if resp.status_code == 200 and _response_within_limit(resp, GEOIP_MAX_BYTES):
                 data = resp.json()
                 if isinstance(data, dict) and data.get("status") == "success":
                     region = region_for_country_code(data.get("countryCode")) or "OTHER"
@@ -1113,7 +1204,8 @@ def lookup_region_by_ip(ip_text: str) -> str:
     return region
 
 
-EGRESS_BATCH_API = "http://ip-api.com/batch?fields=status,countryCode,proxy,hosting,mobile,query"
+EGRESS_BATCH_API = "https://ip-api.com/batch?fields=status,countryCode,proxy,hosting,mobile,query"
+EGRESS_BATCH_MAX_BYTES = 262_144
 
 
 # 出口类型在订阅排序中的优先级（越小越靠前）：住宅出口在深圳实测
@@ -1154,8 +1246,10 @@ def classify_egress_ips(ips) -> dict:
             json=unique[:100],
             timeout=(5, 15),
             headers={"User-Agent": USER_AGENT},
+            allow_redirects=False,
+            stream=True,
         ) as resp:
-            if resp.status_code != 200:
+            if resp.status_code != 200 or not _response_within_limit(resp, EGRESS_BATCH_MAX_BYTES):
                 return {}
             data = resp.json()
     except Exception:
@@ -1384,6 +1478,17 @@ def apply_field_evidence_shaping(ranked_nodes, field_networks=None):
 
 def history_key(line: str) -> str:
     """节点在历史中的身份：用去重键（忽略备注名）的哈希。"""
+    if isinstance(line, str):
+        return _history_key_cached(line)
+    key = get_dedup_key(line)
+    if key is None:
+        protocol, host, port = get_endpoint(line)
+        key = (protocol, str(host).lower(), port)
+    return hashlib.sha256(repr(key).encode("utf-8")).hexdigest()[:16]
+
+
+@functools.lru_cache(maxsize=16384)
+def _history_key_cached(line: str) -> str:
     key = get_dedup_key(line)
     if key is None:
         protocol, host, port = get_endpoint(line)
@@ -1902,10 +2007,12 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
             value = str(result.get(field) or "unknown")
             diagnostic_counts[key][value] = diagnostic_counts[key].get(value, 0) + 1
 
+    # 预建 uri -> latency 索引，避免原先对每条成功节点线性扫描 alive 的 O(n^2)。
+    _latency_by_uri = {entry[0]: entry[1] for entry in alive}
     speed_nodes = []
     for uri, result in successful_speeds[:20]:
         protocol, _, _ = get_endpoint(uri)
-        latency = next((entry[1] for entry in alive if entry[0] == uri), None)
+        latency = _latency_by_uri.get(uri)
         speed_nodes.append({
             "id": hashlib.sha256(uri.encode("utf-8")).hexdigest()[:12],
             "protocol": protocol,
@@ -1999,6 +2106,17 @@ def write_quality_report(raw_count: int, candidate_count: int, stats: dict,
 
 def get_dedup_key(line: str):
     """区分同端点但凭据/传输参数不同的节点，同时忽略节点备注。"""
+    if isinstance(line, str):
+        return _get_dedup_key_cached(line)
+    return _get_dedup_key_impl(line)
+
+
+@functools.lru_cache(maxsize=16384)
+def _get_dedup_key_cached(line: str):
+    return _get_dedup_key_impl(line)
+
+
+def _get_dedup_key_impl(line: str):
     protocol, host, port = get_endpoint(line)
     if not protocol or not host or not port:
         return None
@@ -2032,6 +2150,17 @@ def get_dedup_key(line: str):
 
 def get_endpoint(line: str):
     """返回 (protocol, host, port) 或 (None, None, None)"""
+    if isinstance(line, str):
+        return _get_endpoint_cached(line)
+    return _get_endpoint_impl(line)
+
+
+@functools.lru_cache(maxsize=16384)
+def _get_endpoint_cached(line: str):
+    return _get_endpoint_impl(line)
+
+
+def _get_endpoint_impl(line: str):
     line = line.strip()
     protocol = get_protocol(line)
     if not protocol:
@@ -2163,9 +2292,67 @@ def is_allowed_source_url(url: str) -> bool:
         return False
 
 
+def source_host_is_public(url: str) -> bool:
+    """DNS 重绑定防线：请求前确认 URL 主机解析到的地址全部为公网。
+
+    主机名白名单只能证明名字可信，攻击者控制 DNS 时仍可把名字解析到
+    内网（重绑定）。这里复用 resolve_public_addresses（它拒绝任何含
+    非公网地址的解析结果，IP 字面量同样校验）；解析失败、超时或结果
+    为空一律拒绝。可单测：测试只需 mock resolve_public_addresses。
+    """
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+    except (ValueError, TypeError):
+        return False
+    if not host:
+        return False
+    try:
+        return bool(resolve_public_addresses(host))
+    except Exception:
+        return False
+
+
+def _fetch_url_bytes(url: str, deadline: float, request_timeout=None) -> bytes:
+    """共用抓取实现（fetch_source 与 _fetch_text 共用同一纪律）：
+    白名单已由调用方校验；此处负责禁重定向、只接受 200、Content-Length
+    与流式累计双重 2MB 上限、以及整轮 deadline。失败以异常抛出，由
+    调用方决定重试 (fetch_source) 还是返回 None (_fetch_text)。
+    request_timeout 为 None 时按 deadline 剩余时间自行计算。
+    """
+    if request_timeout is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("source deadline exceeded")
+        request_timeout = (min(SOURCE_TIMEOUT[0], remaining), min(SOURCE_TIMEOUT[1], remaining))
+    with requests.get(url, timeout=request_timeout, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
+        # Redirects are disabled above; accept only a successful full response.
+        # raise_for_status() does not reject 3xx when redirects are disabled.
+        if resp.status_code != 200:
+            raise ValueError(f"unexpected HTTP status: {resp.status_code}")
+        length = resp.headers.get("Content-Length")
+        if length and int(length) > MAX_SOURCE_BYTES:
+            raise ValueError("source too large")
+        chunks, total = [], 0
+        for chunk in resp.iter_content(chunk_size=16384):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("source deadline exceeded")
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_SOURCE_BYTES:
+                raise ValueError("source too large")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+
 def fetch_source(url: str) -> list[str]:
     if not is_allowed_source_url(url):
         print('[源拒绝] 仅允许 HTTPS 白名单源（raw.githubusercontent.com 及批准的例外）')
+        _record_source_failure(url, "SourceNotAllowed")
+        return []
+    if not source_host_is_public(url):
+        print('[源拒绝] 源主机 DNS 校验失败（解析为空或含非公网地址）')
+        _record_source_failure(url, "SourceDnsRejected")
         return []
     last_error = None
     # One deadline covers every attempt and the retry delay; retries never reset the budget.
@@ -2177,27 +2364,10 @@ def fetch_source(url: str) -> list[str]:
             break
         try:
             request_timeout = (min(SOURCE_TIMEOUT[0], remaining), min(SOURCE_TIMEOUT[1], remaining))
-            with requests.get(url, timeout=request_timeout, headers={"User-Agent": USER_AGENT}, stream=True, allow_redirects=False) as resp:
-                # Redirects are disabled above; accept only a successful full response.
-                # raise_for_status() does not reject 3xx when redirects are disabled.
-                if resp.status_code != 200:
-                    raise ValueError(f"unexpected HTTP status: {resp.status_code}")
-                length = resp.headers.get("Content-Length")
-                if length and int(length) > MAX_SOURCE_BYTES:
-                    raise ValueError("source too large")
-                chunks, total = [], 0
-                for chunk in resp.iter_content(chunk_size=16384):
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("source deadline exceeded")
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > MAX_SOURCE_BYTES:
-                        raise ValueError("source too large")
-                    chunks.append(chunk)
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("source deadline exceeded")
-                return decode_subscription(b"".join(chunks).decode("utf-8-sig", errors="replace"))
+            data = _fetch_url_bytes(url, deadline, request_timeout)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("source deadline exceeded")
+            return decode_subscription(data.decode("utf-8-sig", errors="replace"))
         except (requests.RequestException, ValueError, UnicodeError, TimeoutError) as e:
             last_error = type(e).__name__
             if attempt < SOURCE_RETRIES:
@@ -2205,6 +2375,7 @@ def fetch_source(url: str) -> list[str]:
                 if remaining <= 0:
                     break
                 time.sleep(min(1.0, remaining))
+    _record_source_failure(url, str(last_error))
     print(f"[源失败] request failed or response limit exceeded ({last_error})")
     return []
 
@@ -2218,32 +2389,19 @@ _FCN_FILE_RE = re.compile(r"https://node\.freeclashnode\.com/uploads/[\w./-]+\.t
 
 def _fetch_text(url: str) -> str | None:
     """按与 fetch_source 相同的安全纪律抓一个文本页（白名单主机、
-    不跟随重定向、2MB 上限、总时限），失败返回 None。"""
+    DNS 公网校验、不跟随重定向、2MB 上限、总时限），失败返回 None。
+    实际抓取走共用的 _fetch_url_bytes。"""
     if not is_allowed_source_url(url):
+        return None
+    if not source_host_is_public(url):
         return None
     deadline = time.monotonic() + SOURCE_DEADLINE
     try:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
-        request_timeout = (min(SOURCE_TIMEOUT[0], remaining), min(SOURCE_TIMEOUT[1], remaining))
-        with requests.get(url, timeout=request_timeout, headers={"User-Agent": USER_AGENT},
-                          stream=True, allow_redirects=False) as resp:
-            if resp.status_code != 200:
-                return None
-            chunks, total = [], 0
-            for chunk in resp.iter_content(chunk_size=16384):
-                if time.monotonic() >= deadline:
-                    return None
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > MAX_SOURCE_BYTES:
-                    return None
-                chunks.append(chunk)
-        return b"".join(chunks).decode("utf-8", "replace")
-    except Exception:
+        data = _fetch_url_bytes(url, deadline)
+    except Exception as e:
+        _record_source_failure(url, type(e).__name__)
         return None
+    return data.decode("utf-8", "replace")
 
 
 def extract_freeclashnode_file_urls(html: str) -> list[str]:
@@ -2667,6 +2825,7 @@ def main():
     write_quality_report(len(raw_nodes), unique_candidate_count, stats, alive, "updated", speed_results, selected=selected, history=history, discovered=discovered_state, discovery_stats=discovery_stats, egress_summary=egress_summary)
     print(f"质量报告已更新: {QUALITY_REPORT}")
 
+    _print_source_failure_counts()
     print(f"\n已生成真实测速节点: {len(selected)} 个")
     print(f"  → {OUTPUT}")
     print("订阅仅包含已通过实际代理下载测试的节点，CF 前置优先、再按档位和 Mbps 排序；不会提交节点 URI。")
