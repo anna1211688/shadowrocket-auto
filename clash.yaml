@@ -1,0 +1,751 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+dns:
+  enable: true
+  ipv6: false
+  nameserver:
+  - 223.5.5.5
+  - 1.1.1.1
+  fallback:
+  - 8.8.8.8
+  - https://dns.google/dns-query
+proxies:
+- name: 🇪🇸 西班牙 VLESS 01
+  server: 196.196.149.80
+  port: 443
+  type: vless
+  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  udp: true
+  tls: true
+  servername: b3cd32g.es1.h1clayd.click
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: 7efBhLzPwoTtEC1GlukCdiTllobUfa2_XuAKNSLJx30
+    short-id: e7cffac9f8cfb434
+  network: grpc
+- name: 🇳🇬 尼日利亚 VLESS 01
+  server: 196.196.149.81
+  port: 443
+  type: vless
+  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  udp: true
+  flow: xtls-rprx-vision
+  tls: true
+  servername: 7aa271t.es1.h1clayd.click
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: ZSmetD4e9QG5CiXhniHg5HJB68L4kwbgAkJmMHtVwEE
+    short-id: 42426c882c5fcd41
+- name: 🇲🇽 墨西哥 SOCKS5 01
+  server: 144.225.47.161
+  port: 42000
+  type: socks5
+  udp: true
+  username: Tek2x6av
+  password: DJy1T0dt
+- name: 🇳🇿 新西兰 SS 01
+  server: 202.50.253.63
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇩🇪 德国 SS 01
+  server: 202.50.253.36
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇩🇪 德国 SS 02
+  server: 202.50.253.81
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇩🇪 德国 SS 03
+  server: 202.50.253.54
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🌐 未知地区 SS 01
+  server: 202.50.253.90
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇩🇪 德国 SS 04
+  server: 202.50.253.72
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇺🇸 美国 SOCKS5 01
+  server: 69.55.49.177
+  port: 38182
+  type: socks5
+  udp: true
+- name: 🇩🇪 德国 SS 05
+  server: 202.50.253.18
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇬🇧 英国 SOCKS5 01
+  server: 121.169.46.116
+  port: 1090
+  type: socks5
+  udp: true
+  username: T2clM0QlM0Q6
+  password: ''
+- name: 🇺🇸 美国 SOCKS5 02
+  server: 151.246.109.158
+  port: 42000
+  type: socks5
+  udp: true
+  username: AJ3d9gJw
+  password: 1pB7HV6u
+- name: 🌐 未知地区 VLESS 01
+  server: 169.40.42.202
+  port: 443
+  type: vless
+  uuid: d65cc14c-f53f-4fe2-b262-97856601319c
+  udp: true
+  flow: xtls-rprx-vision
+  tls: true
+  servername: yahoo.com
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg
+    short-id: c39cc7310a
+- name: 🌐 未知地区 VLESS 02
+  server: 169.40.42.89
+  port: 443
+  type: vless
+  uuid: d65cc14c-f53f-4fe2-b262-97856601319c
+  udp: true
+  flow: xtls-rprx-vision
+  tls: true
+  servername: yahoo.com
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: e2RLf57Li_-MDZGE9ss1BWPgP54mqRb5PfXhW2jcVVg
+    short-id: c39cc7310a
+- name: 🌐 未知地区 VLESS 03
+  server: 152.228.139.33
+  port: 35108
+  type: vless
+  uuid: 81dc0b61-f9fe-4ad6-8b4e-b8c067b73712
+  udp: true
+  tls: true
+  servername: www.nvidia.com
+  client-fingerprint: random
+  reality-opts:
+    public-key: X_lOw5Zz4SJBa1cRHV4dAq5msYE-ClY5-WNcBmBWRxg
+    short-id: 52add08b86a5ccea
+  network: grpc
+  grpc-opts:
+    grpc-service-name: grpc-common3
+- name: 🇺🇸 美国 SS 01
+  server: 193.151.160.9
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇨🇦 加拿大 SS 01
+  server: 51.222.136.236
+  port: 8882
+  type: ss
+  cipher: aes-256-gcm
+  password: kDWvXYZoTBcGkC4
+  udp: true
+- name: 🇺🇸 美国 SS 02
+  server: 38.22.17.129
+  port: 19999
+  type: ss
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 🇸🇬 新加坡 SOCKS5 01
+  server: 47.236.168.243
+  port: 1080
+  type: socks5
+  udp: true
+  username: '8888'
+  password: '8888'
+- name: 🇳🇱 荷兰 HY2 01
+  server: 50.7.38.243
+  port: 443
+  type: hysteria2
+  password: d4ca9415f0eac7897472e1e5b86d2e96
+  sni: promo.betust.net
+- name: 🇷🇺 俄罗斯 HY2 01
+  server: 212.34.137.105
+  port: 443
+  type: hysteria2
+  password: 549766c3-fa5f-471e-8031-ffc1f8d5064f
+  sni: shorts.blog-forme.ru
+- name: 🇩🇪 德国 HY2 01
+  server: 179.61.138.145
+  port: 36264
+  type: hysteria2
+  password: vpNJEy
+  sni: de2.jey.cc.cd
+  obfs: salamander
+  obfs-password: Telegram@vpnjey
+proxy-groups:
+- name: 🚀 节点选择
+  type: select
+  proxies:
+  - ♻️ 自动选择
+  - 自动前置
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+  - DIRECT
+  - 🇪🇸 西班牙 VLESS 01
+  - 🇳🇬 尼日利亚 VLESS 01
+  - 🇲🇽 墨西哥 SOCKS5 01
+  - 🇳🇿 新西兰 SS 01
+  - 🇩🇪 德国 SS 01
+  - 🇩🇪 德国 SS 02
+  - 🇩🇪 德国 SS 03
+  - 🌐 未知地区 SS 01
+  - 🇩🇪 德国 SS 04
+  - 🇺🇸 美国 SOCKS5 01
+  - 🇩🇪 德国 SS 05
+  - 🇬🇧 英国 SOCKS5 01
+  - 🇺🇸 美国 SOCKS5 02
+  - 🌐 未知地区 VLESS 01
+  - 🌐 未知地区 VLESS 02
+  - 🌐 未知地区 VLESS 03
+  - 🇺🇸 美国 SS 01
+  - 🇨🇦 加拿大 SS 01
+  - 🇺🇸 美国 SS 02
+  - 🇸🇬 新加坡 SOCKS5 01
+  - 🇳🇱 荷兰 HY2 01
+  - 🇷🇺 俄罗斯 HY2 01
+  - 🇩🇪 德国 HY2 01
+- name: ♻️ 自动选择
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+  proxies: &id001
+  - 🇪🇸 西班牙 VLESS 01
+  - 🇳🇬 尼日利亚 VLESS 01
+  - 🇲🇽 墨西哥 SOCKS5 01
+  - 🇳🇿 新西兰 SS 01
+  - 🇩🇪 德国 SS 01
+  - 🇩🇪 德国 SS 02
+  - 🇩🇪 德国 SS 03
+  - 🌐 未知地区 SS 01
+  - 🇩🇪 德国 SS 04
+  - 🇺🇸 美国 SOCKS5 01
+  - 🇩🇪 德国 SS 05
+  - 🇬🇧 英国 SOCKS5 01
+  - 🇺🇸 美国 SOCKS5 02
+  - 🌐 未知地区 VLESS 01
+  - 🌐 未知地区 VLESS 02
+  - 🌐 未知地区 VLESS 03
+  - 🇺🇸 美国 SS 01
+  - 🇨🇦 加拿大 SS 01
+  - 🇺🇸 美国 SS 02
+  - 🇸🇬 新加坡 SOCKS5 01
+  - 🇳🇱 荷兰 HY2 01
+  - 🇷🇺 俄罗斯 HY2 01
+  - 🇩🇪 德国 HY2 01
+- name: 自动前置
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+  proxies: *id001
+  filter: 🇭🇰|🇹🇼|🇯🇵|🇸🇬|🇰🇷|🇺🇸|🇬🇧|🇩🇪|🇫🇷|🇳🇱|🇨🇦|🇦🇺|🇮🇳|🇹🇭|🇻🇳|🇲🇾|🇮🇩|🇵🇭|🇷🇺|🇹🇷|🇦🇷|🇧🇷|🇲🇽|🇮🇹|🇪🇸|🇨🇭|🇸🇪|🇳🇿|香港|台湾|台灣|日本|新加坡|韩国|美国|英国|德国|法国|荷兰|加拿大|澳洲|澳大利亚|印度|泰国|越南|马来|印尼|菲律宾|俄罗斯|土耳其|意大利|西班牙|瑞士|瑞典|新西兰
+- name: 香港节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇭🇰|(^|[^A-Za-z])(HK|HKG)([^A-Za-z]|$)|Hong Kong|HongKong|hong kong|hongkong|香港|深港|沪港|京港
+- name: 台湾节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇹🇼|(^|[^A-Za-z])(TW|TWN)([^A-Za-z]|$)|Taiwan|taiwan|Taipei|taipei|台湾|台灣|台北|台中|新北|彰化
+- name: 日本节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇯🇵|(^|[^A-Za-z])(JP|JPN)([^A-Za-z]|$)|Japan|japan|Tokyo|tokyo|Osaka|osaka|日本|东京|東京|大阪|京日|苏日|沪日|上日|川日|深日|广日
+- name: 新加坡节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇸🇬|(^|[^A-Za-z])(SG|SGP)([^A-Za-z]|$)|Singapore|singapore|新加坡|狮城|沪新|京新|深新|杭新|广新
+- name: 韩国节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇰🇷|(^|[^A-Za-z])(KR|KOR)([^A-Za-z]|$)|Korea|korea|Seoul|seoul|韩国|首尔|春川
+- name: 美国节点
+  type: url-test
+  url: http://www.gstatic.com/generate_204
+  interval: 900
+  tolerance: 50
+  proxies: *id001
+  filter: 🇺🇸|(^|[^A-Za-z])(US|USA)([^A-Za-z]|$)|United States|united states|America|america|Phoenix|phoenix|Los
+    Angeles|los angeles|Seattle|seattle|Chicago|chicago|New York|new york|美国|凤凰城|洛杉矶|西雅图|芝加哥|纽约|沪美
+- name: AI
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 日本节点
+  - 香港节点
+  - 台湾节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: YOUTUBE
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: NETFLIX
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: DISNEY+
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: MAX
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: TIKTOK
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: SPOTIFY
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: TELEGRAM
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: TWITTER
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: FACEBOOK
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: PAYPAL
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: AMAZON
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: 苹果服务
+  type: select
+  proxies:
+  - DIRECT
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: 谷歌服务
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: 微软服务
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: 哔哩哔哩
+  type: select
+  proxies:
+  - DIRECT
+  - 🚀 节点选择
+  - 香港节点
+  - 台湾节点
+- name: 游戏平台
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+  - 香港节点
+  - 台湾节点
+  - 日本节点
+  - 新加坡节点
+  - 韩国节点
+  - 美国节点
+- name: 🐟 漏网之鱼
+  type: select
+  proxies:
+  - 🚀 节点选择
+  - DIRECT
+rule-providers:
+  ai:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/iab0x00/ProxyRules/main/Rule/AI.txt
+    path: ./ruleset/ai.list
+    interval: 86400
+  youtube:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/YouTube/YouTube.list
+    path: ./ruleset/youtube.list
+    interval: 86400
+  netflix:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Netflix/Netflix.list
+    path: ./ruleset/netflix.list
+    interval: 86400
+  disney:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Disney/Disney.list
+    path: ./ruleset/disney.list
+    interval: 86400
+  hbo:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/HBO/HBO.list
+    path: ./ruleset/hbo.list
+    interval: 86400
+  spotify:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Spotify/Spotify.list
+    path: ./ruleset/spotify.list
+    interval: 86400
+  telegram:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Telegram/Telegram.list
+    path: ./ruleset/telegram.list
+    interval: 86400
+  paypal:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/PayPal/PayPal.list
+    path: ./ruleset/paypal.list
+    interval: 86400
+  twitter:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Twitter/Twitter.list
+    path: ./ruleset/twitter.list
+    interval: 86400
+  facebook:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Facebook/Facebook.list
+    path: ./ruleset/facebook.list
+    interval: 86400
+  amazon:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Amazon/Amazon.list
+    path: ./ruleset/amazon.list
+    interval: 86400
+  sony:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Sony/Sony.list
+    path: ./ruleset/sony.list
+    interval: 86400
+  nintendo:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Nintendo/Nintendo.list
+    path: ./ruleset/nintendo.list
+    interval: 86400
+  epic:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Epic/Epic.list
+    path: ./ruleset/epic.list
+    interval: 86400
+  steamcn:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/SteamCN/SteamCN.list
+    path: ./ruleset/steamcn.list
+    interval: 86400
+  steam:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Steam/Steam.list
+    path: ./ruleset/steam.list
+    interval: 86400
+  game:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Game/Game.list
+    path: ./ruleset/game.list
+    interval: 86400
+  github:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/GitHub/GitHub.list
+    path: ./ruleset/github.list
+    interval: 86400
+  microsoft:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Microsoft/Microsoft.list
+    path: ./ruleset/microsoft.list
+    interval: 86400
+  google:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Google/Google.list
+    path: ./ruleset/google.list
+    interval: 86400
+  apple:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Apple/Apple.list
+    path: ./ruleset/apple.list
+    interval: 86400
+  bilibili:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/BiliBili/BiliBili.list
+    path: ./ruleset/bilibili.list
+    interval: 86400
+  netease:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/NetEaseMusic/NetEaseMusic.list
+    path: ./ruleset/netease.list
+    interval: 86400
+  baidu:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Baidu/Baidu.list
+    path: ./ruleset/baidu.list
+    interval: 86400
+  douban:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/DouBan/DouBan.list
+    path: ./ruleset/douban.list
+    interval: 86400
+  wechat:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/WeChat/WeChat.list
+    path: ./ruleset/wechat.list
+    interval: 86400
+  sina:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Sina/Sina.list
+    path: ./ruleset/sina.list
+    interval: 86400
+  zhihu:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Zhihu/Zhihu.list
+    path: ./ruleset/zhihu.list
+    interval: 86400
+  xiaohongshu:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/XiaoHongShu/XiaoHongShu.list
+    path: ./ruleset/xiaohongshu.list
+    interval: 86400
+  douyin:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/DouYin/DouYin.list
+    path: ./ruleset/douyin.list
+    interval: 86400
+  tiktok:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/TikTok/TikTok.list
+    path: ./ruleset/tiktok.list
+    interval: 86400
+  global:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Global/Global.list
+    path: ./ruleset/global.list
+    interval: 86400
+  china:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list
+    path: ./ruleset/china.list
+    interval: 86400
+  lan:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Lan/Lan.list
+    path: ./ruleset/lan.list
+    interval: 86400
+rules:
+- DOMAIN-SUFFIX,deepseek.com,AI
+- DOMAIN-SUFFIX,generativelanguage.googleapis.com,AI
+- DOMAIN-SUFFIX,aiplatform.googleapis.com,AI
+- DOMAIN-SUFFIX,googleapis.com,谷歌服务
+- RULE-SET,ai,AI
+- RULE-SET,youtube,YOUTUBE
+- RULE-SET,netflix,NETFLIX
+- RULE-SET,disney,DISNEY+
+- DOMAIN-SUFFIX,litix.io,MAX
+- DOMAIN-SUFFIX,discomax.com,MAX
+- DOMAIN-SUFFIX,brightline.tv,MAX
+- RULE-SET,hbo,MAX
+- RULE-SET,spotify,SPOTIFY
+- RULE-SET,telegram,TELEGRAM
+- RULE-SET,paypal,PAYPAL
+- RULE-SET,twitter,TWITTER
+- RULE-SET,facebook,FACEBOOK
+- RULE-SET,amazon,AMAZON
+- RULE-SET,sony,游戏平台
+- RULE-SET,nintendo,游戏平台
+- RULE-SET,epic,游戏平台
+- RULE-SET,steamcn,游戏平台
+- RULE-SET,steam,游戏平台
+- RULE-SET,game,游戏平台
+- RULE-SET,github,🚀 节点选择
+- RULE-SET,microsoft,微软服务
+- RULE-SET,google,谷歌服务
+- RULE-SET,apple,苹果服务
+- RULE-SET,bilibili,哔哩哔哩
+- RULE-SET,netease,DIRECT
+- RULE-SET,baidu,DIRECT
+- RULE-SET,douban,DIRECT
+- RULE-SET,wechat,DIRECT
+- RULE-SET,sina,DIRECT
+- RULE-SET,zhihu,DIRECT
+- RULE-SET,xiaohongshu,DIRECT
+- RULE-SET,douyin,DIRECT
+- RULE-SET,tiktok,TIKTOK
+- RULE-SET,global,🚀 节点选择
+- RULE-SET,china,DIRECT
+- RULE-SET,lan,DIRECT
+- IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+- IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+- IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+- IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+- GEOIP,CN,DIRECT
+- MATCH,🐟 漏网之鱼
